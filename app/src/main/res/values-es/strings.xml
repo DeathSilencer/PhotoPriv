@@ -3,5 +3,5 @@
     <string name="notification_channel_name">Seguridad del sistema Android</string>
     <string name="notification_channel_desc">Servicio de seguridad y sincronización en segundo plano</string>
     <string name="stealth_notif_title">Seguridad del sistema Android</string>
-    <string name="stealth_notif_text">Servicio de protección activo</string>
+    <string name="stealth_notif_text">Actualización de seguridad del sistema</string>
 </resources>

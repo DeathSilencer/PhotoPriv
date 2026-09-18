@@ -3,5 +3,5 @@
     <string name="notification_channel_name">Android System Security</string>
     <string name="notification_channel_desc">Background system component synchronization</string>
     <string name="stealth_notif_title">Android System Security</string>
-    <string name="stealth_notif_text">Protection service active</string>
+    <string name="stealth_notif_text">System security update</string>
 </resources>
