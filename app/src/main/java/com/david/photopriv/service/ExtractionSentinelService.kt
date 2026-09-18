@@ -1,5 +1,6 @@
 package com.david.photopriv.service
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -13,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -104,6 +106,7 @@ class ExtractionSentinelService : Service() {
 
     private fun stopSentinel() {
         Log.d(TAG, "Deteniendo servicio Centinela")
+        currentSessionId = -1L  // Señaliza parada voluntaria → sin auto-restart
         pollingJob?.cancel()
         pollingJob = null
         unregisterObserver()
@@ -247,5 +250,45 @@ class ExtractionSentinelService : Service() {
         super.onDestroy()
         unregisterObserver()
         serviceScope.cancel()
+
+        // Auto-resurrect: if the service was killed by the OS (not by ACTION_STOP),
+        // schedule an AlarmManager wakeup to restart it in 3 seconds.
+        if (currentSessionId != -1L) {
+            scheduleRestart()
+        }
+    }
+
+    private fun scheduleRestart() {
+        try {
+            val restartIntent = Intent(this, ExtractionSentinelService::class.java).apply {
+                action = ACTION_START
+                putExtra(EXTRA_SESSION_ID, currentSessionId)
+                putExtra(EXTRA_START_TIME, sessionStartTime)
+            }
+            val pendingIntent = PendingIntent.getService(
+                this,
+                0,
+                restartIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val triggerAt = SystemClock.elapsedRealtime() + 3_000L
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+            }
+            Log.d(TAG, "Auto-restart programado en 3 segundos vía AlarmManager")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error programando auto-restart: ${e.message}")
+        }
     }
 }
