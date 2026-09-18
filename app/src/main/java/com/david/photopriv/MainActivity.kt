@@ -34,12 +34,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.david.photopriv.ui.HomeScreen
+import com.david.photopriv.ui.PinLoginScreen
 import com.david.photopriv.ui.PhotoPrivViewModel
 import com.david.photopriv.ui.theme.PhotoPrivTheme
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: PhotoPrivViewModel by viewModels()
+    private var isUnlocked by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,11 +54,24 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     PermissionGuard {
-                        HomeScreen(viewModel = viewModel)
+                        if (isUnlocked) {
+                            HomeScreen(viewModel = viewModel)
+                        } else {
+                            PinLoginScreen(
+                                correctPin = "0908",
+                                onUnlockSuccess = { isUnlocked = true }
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Re-bloqueo automático al salir de la aplicación o apagar la pantalla
+        isUnlocked = false
     }
 
     @Composable
