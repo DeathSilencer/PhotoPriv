@@ -23,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
@@ -41,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -79,13 +82,30 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
     val stats = viewModel.computeStats(sessionPhotos)
     val isSessionActive = activeSession != null
 
-    // Filtro de Sigilo Total:
-    // Los archivos que ya están enviados a Telegram (BACKED_UP) Y que ya regresaron a la Carpeta Bloqueada (isReProtected)
-    // se eliminan automáticamente del menú/lista para no dejar historial ni miniaturas ni pruebas en pantalla.
-    // Solo permanecen visibles los archivos pendientes de subida, los que hayan fallado (para reintentar)
-    // o los que sigan expuestos en la galería pública sin re-bloquear.
+    // Filtro Inteligente de Sigilo Total y Purga Automática del Dashboard:
+    // 1. Archivos pendientes o fallidos -> Siempre visibles para ver el progreso o reintentar.
+    // 2. Archivos respaldados en Telegram (BACKED_UP):
+    //    a) Si ya regresaron a la Carpeta Bloqueada (isReProtected) -> Desaparecen de inmediato.
+    //    b) Si fueron capturados en vivo por cámara o recibidos por chat (WhatsApp, Instagram, Messenger, etc.) ->
+    //       Desaparecen de inmediato al enviarse (estas fotos no van a la Carpeta Privada).
+    //    c) Si provienen de la Carpeta Privada pero llevan más de 40 minutos respaldados sin re-bloquearse ->
+    //       Se purgan automáticamente para no dejar rastros en el dashboard indefinidamente.
     val visiblePhotos = remember(sessionPhotos) {
-        sessionPhotos.filterNot { it.backupStatus == BackupStatus.BACKED_UP && it.isReProtected }
+        val now = System.currentTimeMillis()
+        val FORTY_MINUTES_MS = 40 * 60 * 1000L
+
+        sessionPhotos.filterNot { photo ->
+            if (photo.backupStatus != BackupStatus.BACKED_UP) {
+                false
+            } else if (photo.isReProtected) {
+                true
+            } else if (isChatOrLiveMedia(photo)) {
+                true
+            } else {
+                val backupTime = photo.backupTimestamp ?: (photo.dateAdded * 1000L)
+                (now - backupTime) >= FORTY_MINUTES_MS
+            }
+        }
     }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -273,18 +293,32 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
-                    if (stats.failed > 0 || (stats.backedUp < stats.total && stats.total > 0)) {
-                        val retryLabel = if (stats.failed > 0) "Reintentar (${stats.failed} fallidos)" else "Reintentar Envío"
-                        OutlinedButton(
-                            onClick = { viewModel.retryBackup() },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = if (stats.failed > 0) Color(0xFFDC2626) else MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(retryLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (stats.failed > 0) {
+                            TextButton(
+                                onClick = { viewModel.dismissFailedPhotos() },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFDC2626))
+                            ) {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("Descartar (${stats.failed})", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        if (stats.failed > 0 || (stats.backedUp < stats.total && stats.total > 0)) {
+                            val retryLabel = if (stats.failed > 0) "Reintentar" else "Reintentar Envío"
+                            OutlinedButton(
+                                onClick = { viewModel.retryBackup() },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = if (stats.failed > 0) Color(0xFFDC2626) else MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(retryLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }
@@ -330,7 +364,8 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
                     PhotoChecklistCard(
                         photo = photo,
                         onOpenInGallery = { viewModel.openInGooglePhotos(photo) },
-                        onRetryClick = { viewModel.retrySinglePhoto(photo) }
+                        onRetryClick = { viewModel.retrySinglePhoto(photo) },
+                        onDismissClick = { viewModel.dismissPhoto(photo) }
                     )
                 }
             }
@@ -457,7 +492,8 @@ fun StatItem(title: String, value: String, color: Color, modifier: Modifier = Mo
 fun PhotoChecklistCard(
     photo: TrackedPhoto,
     onOpenInGallery: () -> Unit,
-    onRetryClick: () -> Unit
+    onRetryClick: () -> Unit,
+    onDismissClick: () -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(12.dp),
@@ -621,21 +657,73 @@ fun PhotoChecklistCard(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Botón directo para abrir en Google Fotos
-            IconButton(
-                onClick = onOpenInGallery,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                    contentDescription = "Abrir en Fotos",
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Botón directo para abrir en Google Fotos
+                IconButton(
+                    onClick = onOpenInGallery,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = "Abrir en Fotos",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Botón para descartar / eliminar de la cola si se traba
+                IconButton(
+                    onClick = onDismissClick,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFEE2E2))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Descartar / Eliminar",
+                        tint = Color(0xFFDC2626),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     }
+}
+
+/**
+ * Detecta si un archivo proviene de aplicaciones de mensajería (WhatsApp, Instagram, Messenger, etc.)
+ * o si es una captura recién tomada con la cámara, diferenciándola de archivos históricos
+ * que fueron extraídos de la Carpeta Bloqueada de Google Fotos.
+ */
+private fun isChatOrLiveMedia(photo: TrackedPhoto): Boolean {
+    val name = photo.displayName.lowercase()
+    // 1. Detección por firmas de nombres de archivo de apps de mensajería y redes sociales
+    if (name.contains("wa") || name.contains("whatsapp") ||
+        name.contains("instagram") || name.contains("received_") ||
+        name.contains("messenger") || name.contains("snapchat") ||
+        name.contains("screenshot") || name.contains("telegram") ||
+        name.contains("download")) {
+        return true
+    }
+
+    // 2. Detección de fotos en vivo de la cámara:
+    // Si la captura se tomó hace menos de 10 minutos (600s) respecto a cuando se detectó en disco,
+    // es una foto tomada en ese instante por la cámara y no una foto antigua extraída de la Carpeta Bloqueada.
+    if (photo.dateTaken > 0) {
+        val dateTakenSec = if (photo.dateTaken > 10000000000L) photo.dateTaken / 1000 else photo.dateTaken
+        val diffSec = Math.abs(photo.dateAdded - dateTakenSec)
+        if (diffSec < 600) {
+            return true
+        }
+    }
+
+    return false
 }
 
 @Composable

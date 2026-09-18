@@ -357,6 +357,41 @@ class PhotoRepository(
     }
 
     /**
+     * Elimina / descarta un archivo de la cola de subida y del panel de control
+     * para desatorar el sistema si se queda pegado o si el usuario no desea enviarlo.
+     */
+    suspend fun dismissPhoto(mediaStoreId: Long) = withContext(Dispatchers.IO) {
+        val photo = photoDao.getPhotoById(mediaStoreId)
+        photo?.localStagingPath?.let { path ->
+            StagingVaultManager.deleteStagedFile(path)
+        }
+        inFlightUploads.remove(mediaStoreId)
+        photoDao.deletePhoto(mediaStoreId)
+        Log.d(TAG, "Archivo $mediaStoreId descartado y eliminado de la cola por el usuario.")
+
+        // Despachar inmediatamente el siguiente archivo en cola para que no se detenga el flujo
+        val active = photoDao.getActiveSession()
+        if (active != null) {
+            dispatchImmediateUpload(active.sessionId)
+        }
+    }
+
+    /**
+     * Descarta todos los archivos fallidos de la sesión.
+     */
+    suspend fun dismissFailedPhotos(sessionId: Long) = withContext(Dispatchers.IO) {
+        val failedPhotos = photoDao.getPendingOrFailedPhotos(sessionId)
+        for (p in failedPhotos) {
+            if (p.backupStatus == BackupStatus.FAILED) {
+                p.localStagingPath?.let { StagingVaultManager.deleteStagedFile(it) }
+                inFlightUploads.remove(p.mediaStoreId)
+            }
+        }
+        photoDao.deleteFailedPhotos(sessionId)
+        Log.d(TAG, "Todos los archivos fallidos de la sesión $sessionId han sido descartados.")
+    }
+
+    /**
      * Reintenta el envío únicamente de los archivos que fallaron, sin reenviar los que ya están en BACKED_UP.
      */
     suspend fun retryFailedUploads(sessionId: Long) = withContext(Dispatchers.IO) {

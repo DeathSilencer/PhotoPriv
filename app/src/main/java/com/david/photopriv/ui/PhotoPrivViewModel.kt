@@ -118,6 +118,21 @@ class PhotoPrivViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun dismissPhoto(photo: TrackedPhoto) {
+        viewModelScope.launch {
+            repository.dismissPhoto(photo.mediaStoreId)
+        }
+    }
+
+    fun dismissFailedPhotos() {
+        viewModelScope.launch {
+            val session = activeSession.value ?: latestSession.value
+            if (session != null) {
+                repository.dismissFailedPhotos(session.sessionId)
+            }
+        }
+    }
+
     fun saveSmtpConfig(config: SmtpConfig) {
         settingsManager.saveSmtpConfig(config)
         _smtpConfig.value = config

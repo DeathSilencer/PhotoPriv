@@ -92,4 +92,9 @@ interface PhotoDao {
     @Query("SELECT COUNT(*) FROM tracked_photos WHERE sessionId = :sessionId AND backupStatus = 'BACKED_UP'")
     fun getBackedUpCount(sessionId: Long): Flow<Int>
 
+    @Query("DELETE FROM tracked_photos WHERE mediaStoreId = :mediaStoreId")
+    fun deletePhoto(mediaStoreId: Long): Int
+
+    @Query("DELETE FROM tracked_photos WHERE sessionId = :sessionId AND backupStatus = 'FAILED'")
+    fun deleteFailedPhotos(sessionId: Long): Int
 }
