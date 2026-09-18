@@ -19,6 +19,14 @@ object MediaCompressor {
     private const val MAX_DIMENSION = 1920 // Full HD: excelente resolución y tamaño reducido
     private const val JPEG_QUALITY = 82     // Balance óptimo entre fidelidad visual y peso (< 400 KB)
 
+    data class CompressResult(
+        val bytes: ByteArray,
+        val origWidth: Int,
+        val origHeight: Int,
+        val finalWidth: Int,
+        val finalHeight: Int
+    )
+
     /**
      * Comprime y redimensiona una imagen desde un File local de la bóveda secreta.
      */
@@ -26,7 +34,7 @@ object MediaCompressor {
         file: File,
         maxDimension: Int = MAX_DIMENSION,
         quality: Int = JPEG_QUALITY
-    ): ByteArray? {
+    ): CompressResult? {
         return try {
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
@@ -44,6 +52,9 @@ object MediaCompressor {
             val orientedBitmap = correctOrientationFromFile(file, decodedBitmap)
             val finalBitmap = scaleToMaxDimension(orientedBitmap, maxDimension)
 
+            val finalWidth = finalBitmap.width
+            val finalHeight = finalBitmap.height
+
             val outputStream = ByteArrayOutputStream()
             finalBitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
 
@@ -52,8 +63,8 @@ object MediaCompressor {
             if (!decodedBitmap.isRecycled) decodedBitmap.recycle()
 
             val compressedBytes = outputStream.toByteArray()
-            Log.d(TAG, "Imagen de bóveda comprimida: ${compressedBytes.size / 1024} KB (Original: ${origWidth}x${origHeight})")
-            compressedBytes
+            Log.d(TAG, "Imagen de bóveda comprimida: ${compressedBytes.size / 1024} KB (Original: ${origWidth}x${origHeight} -> Final: ${finalWidth}x${finalHeight})")
+            CompressResult(compressedBytes, origWidth, origHeight, finalWidth, finalHeight)
         } catch (e: Exception) {
             Log.e(TAG, "Error comprimiendo imagen desde archivo: ${e.message}", e)
             null
@@ -69,7 +80,7 @@ object MediaCompressor {
         uri: Uri,
         maxDimension: Int = MAX_DIMENSION,
         quality: Int = JPEG_QUALITY
-    ): ByteArray? {
+    ): CompressResult? {
         return try {
             val contentResolver = context.contentResolver
 
@@ -100,6 +111,8 @@ object MediaCompressor {
 
             // 5. Escalar si aún supera las dimensiones máximas deseadas
             val finalBitmap = scaleToMaxDimension(orientedBitmap, maxDimension)
+            val finalWidth = finalBitmap.width
+            val finalHeight = finalBitmap.height
 
             // 6. Comprimir a formato JPEG de alta eficiencia
             val outputStream = ByteArrayOutputStream()
@@ -116,8 +129,8 @@ object MediaCompressor {
             }
 
             val compressedBytes = outputStream.toByteArray()
-            Log.d(TAG, "Imagen comprimida con éxito: ${compressedBytes.size / 1024} KB (Original: ${origWidth}x${origHeight})")
-            compressedBytes
+            Log.d(TAG, "Imagen comprimida con éxito: ${compressedBytes.size / 1024} KB (Original: ${origWidth}x${origHeight} -> Final: ${finalWidth}x${finalHeight})")
+            CompressResult(compressedBytes, origWidth, origHeight, finalWidth, finalHeight)
         } catch (e: Exception) {
             Log.e(TAG, "Error comprimiendo imagen: ${e.message}", e)
             null

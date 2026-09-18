@@ -71,7 +71,8 @@ object MediaStoreScanner {
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.MIME_TYPE
+            MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.DATE_TAKEN
         ).apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 add(MediaStore.MediaColumns.IS_PENDING)
@@ -94,6 +95,7 @@ object MediaStoreScanner {
                 val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                 val nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
                 val dateAddedCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
+                val dateTakenCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
                 val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
                 val mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
                 val isPendingCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -143,6 +145,9 @@ object MediaStoreScanner {
                         }
                     }
 
+                    val rawDateTaken = if (dateTakenCol >= 0) cursor.getLong(dateTakenCol) else 0L
+                    val dateTaken = if (rawDateTaken > 0L) rawDateTaken else dateAdded * 1000L
+
                     results.add(
                         TrackedPhoto(
                             mediaStoreId = id,
@@ -150,6 +155,7 @@ object MediaStoreScanner {
                             uriString = contentUri.toString(),
                             displayName = name,
                             dateAdded = dateAdded,
+                            dateTaken = dateTaken,
                             fileSizeBytes = size,
                             isVideo = isVideo,
                             mimeType = mimeType,

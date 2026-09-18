@@ -278,6 +278,7 @@ class PhotoRepository(
                                 config = telegramConfig,
                                 photo = targetMedia,
                                 dataSaverMode = if (targetMedia.isVideo) false else appPrefs.dataSaverMode,
+                                deviceName = appPrefs.deviceName,
                                 onPartProgress = { part, total ->
                                     photoDao.updateBackupStatus(
                                         targetMedia.mediaStoreId,

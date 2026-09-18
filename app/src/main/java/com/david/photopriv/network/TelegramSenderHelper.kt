@@ -57,6 +57,7 @@ object TelegramSenderHelper {
         config: TelegramConfig,
         photo: TrackedPhoto,
         dataSaverMode: Boolean = true,
+        deviceName: String = "",
         onPartProgress: ((part: Int, total: Int) -> Unit)? = null
     ): SendResult = withContext(Dispatchers.IO) {
         if (!config.isConfigured) {
@@ -83,7 +84,17 @@ object TelegramSenderHelper {
 
         try {
             val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            val captureTimeStr = formatCaptureTime(photo.dateTaken)?.let { "\n🗓️ Captura: $it" } ?: ""
             val url = "https://api.telegram.org/bot${config.botToken}/sendDocument"
+
+            val resolvedDevice = deviceName.trim().ifBlank {
+                val m = android.os.Build.MODEL
+                val man = android.os.Build.MANUFACTURER.replaceFirstChar {
+                    if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+                }
+                if (m.startsWith(man, ignoreCase = true)) m else "$man $m"
+            }
+            val deviceHeader = "📱 Teléfono: *$resolvedDevice*"
 
             // =========================================================================
             // CASO A: VIDEOS (Hasta 45MB directos o > 45MB en clips MP4 reproducibles)
@@ -105,32 +116,44 @@ object TelegramSenderHelper {
                         return@withContext SendResult.Error("No se pudo leer el archivo de video para ${photo.displayName}")
                     }
 
+                    val totalOriginalVideoBytes = sourceFile.length()
+                    val totalOriginalSizeStr = formatSize(totalOriginalVideoBytes)
+
                     val videoParts = VideoSegmenter.splitIntoPlayableClips(context, sourceFile, photo.displayName)
                     if (videoParts.isEmpty()) {
                         return@withContext SendResult.Error("Fallo al generar clips reproducibles para el video ${photo.displayName}")
                     }
 
                     val totalParts = videoParts.size
+                    val totalDurationSec = videoParts.sumOf { it.durationMs } / 1000
+
                     for (part in videoParts) {
                         onPartProgress?.invoke(part.partIndex, totalParts)
 
                         val partFile = part.file
-                        val partSizeKb = partFile.length() / 1024
+                        val partSizeStr = formatSize(partFile.length())
                         val partDurationSec = part.durationMs / 1000
 
                         val partCaption = if (totalParts == 1) {
                             """
-                            🛡️ *PhotoPriv - Video de Emergencia*
-                            🎥 VIDEO: `${photo.displayName}`
-                            📦 Tamaño: $partSizeKb KB
-                            ⏱️ Duración: ${partDurationSec}s | Hora: $timestamp
+                            🛡️ *PhotoPriv - Video Seguro*
+                            $deviceHeader
+                            🎥 Video: `${photo.displayName}`
+                            📦 Tamaño: $partSizeStr
+                            ⏱️ Duración: ${partDurationSec}s
+                            📐 Resolución: ${part.width}×${part.height}$captureTimeStr
+                            ⏱️ Envío: $timestamp
                             """.trimIndent()
                         } else {
                             """
                             🛡️ *PhotoPriv - Video Extendido (Parte ${part.partIndex}/$totalParts)*
-                            🎥 VIDEO: `${photo.displayName}`
-                            📦 Clip MP4 Reproducible: `${partFile.name}` ($partSizeKb KB)
-                            ⏱️ Duración Clip: ${partDurationSec}s | Hora: $timestamp
+                            $deviceHeader
+                            🎥 Video: `${photo.displayName}`
+                            📊 Tamaño Total Original: $totalOriginalSizeStr
+                            📦 Clip MP4 Reproducible: `${partFile.name}` ($partSizeStr)
+                            ⏱️ Duración Clip: ${partDurationSec}s (Total: ${totalDurationSec}s)
+                            📐 Resolución: ${part.width}×${part.height}$captureTimeStr
+                            ⏱️ Envío: $timestamp
                             """.trimIndent()
                         }
 
@@ -185,11 +208,6 @@ object TelegramSenderHelper {
             // =========================================================================
             // CASO B: FOTOS (JPEG, PNG, WEBP, HEIC, etc.)
             // =========================================================================
-            // Telegram Bot API trata automáticamente los archivos .webp como stickers,
-            // mostrándolos diminutos en el chat y sin botón para guardarlos en la galería.
-            // Para garantizar descarga y resolución completa:
-            // 1. Normalizamos la extensión a .jpg para WebP y HEIC.
-            // 2. Comprimimos/convertimos a JPEG antes del envío.
             val targetFileName = if (isWebpOrHeic) {
                 originalName.substringBeforeLast('.') + ".jpg"
             } else if (dataSaverMode && !originalName.endsWith(".jpg", ignoreCase = true) && !originalName.endsWith(".jpeg", ignoreCase = true)) {
@@ -198,28 +216,38 @@ object TelegramSenderHelper {
                 originalName
             }
 
+            val originalSizeBytes = photo.fileSizeBytes.takeIf { it > 0 } ?: (stagedFile?.length() ?: 0L)
+            val originalSizeStr = formatSize(originalSizeBytes)
+
             // 1. Si Ahorro de Datos está activo O el archivo es WebP/HEIC
             if (dataSaverMode || isWebpOrHeic) {
                 val maxDim = if (dataSaverMode) 1920 else 4096
                 val quality = if (dataSaverMode) 82 else 95
 
-                val compressedBytes = if (stagedFile != null && stagedFile.exists()) {
+                val compressResult = if (stagedFile != null && stagedFile.exists()) {
                     MediaCompressor.compressImageFile(stagedFile, maxDimension = maxDim, quality = quality)
                 } else {
                     MediaCompressor.compressImage(context, uri, maxDimension = maxDim, quality = quality)
                 }
 
-                if (compressedBytes != null && compressedBytes.isNotEmpty()) {
-                    val sizeKb = compressedBytes.size / 1024
-                    val modeNote = if (dataSaverMode) "Ahorro de datos activo" else "Alta Resolución"
+                if (compressResult != null && compressResult.bytes.isNotEmpty()) {
+                    val compSizeStr = formatSize(compressResult.bytes.size.toLong())
+                    val reductionPct = if (originalSizeBytes > 0 && originalSizeBytes > compressResult.bytes.size) {
+                        ((originalSizeBytes - compressResult.bytes.size).toDouble() / originalSizeBytes * 100).toInt()
+                    } else 0
+                    val reductionNotice = if (reductionPct > 0) " (-$reductionPct% optimizado)" else ""
+
                     val captionText = """
                         🛡️ *PhotoPriv - Foto Segura*
-                        📷 FOTO: `${targetFileName}`
-                        📦 Tamaño: $sizeKb KB ($modeNote)
-                        ⏱️ Hora: $timestamp
+                        $deviceHeader
+                        📷 Foto: `${targetFileName}`
+                        📊 Tamaño Original: $originalSizeStr
+                        📦 Tamaño Comprimido: $compSizeStr$reductionNotice
+                        📐 Resolución: ${compressResult.origWidth}×${compressResult.origHeight} ➔ ${compressResult.finalWidth}×${compressResult.finalHeight}$captureTimeStr
+                        ⏱️ Envío: $timestamp
                     """.trimIndent()
 
-                    val reqBody = compressedBytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
+                    val reqBody = compressResult.bytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
                     return@withContext executeTelegramSend(url, config.chatId, captionText, targetFileName, reqBody)
                 }
             }
@@ -247,12 +275,12 @@ object TelegramSenderHelper {
                     }
                 }
 
-                val sizeKb = effectiveSize / 1024
                 val captionText = """
-                    🛡️ *PhotoPriv - Foto de Emergencia*
-                    📷 FOTO: `${targetFileName}`
-                    📦 Tamaño: $sizeKb KB (Original)
-                    ⏱️ Hora: $timestamp
+                    🛡️ *PhotoPriv - Foto Segura*
+                    $deviceHeader
+                    📷 Foto: `${targetFileName}`
+                    📦 Tamaño Original: $originalSizeStr (Sin compresión)$captureTimeStr
+                    ⏱️ Envío: $timestamp
                 """.trimIndent()
 
                 return@withContext executeTelegramSend(url, config.chatId, captionText, targetFileName, requestBody)
@@ -263,6 +291,23 @@ object TelegramSenderHelper {
             Log.e(TAG, "Excepción enviando a Telegram: ${e.message}", e)
             SendResult.Error(e.message ?: "Error de conexión con Telegram", e)
         }
+    }
+
+    private fun formatSize(bytes: Long): String {
+        if (bytes <= 0) return "0 KB"
+        val kb = bytes / 1024.0
+        val mb = kb / 1024.0
+        return if (mb >= 1.0) {
+            String.format(Locale.US, "%.2f MB (%d KB)", mb, bytes / 1024)
+        } else {
+            "${bytes / 1024} KB"
+        }
+    }
+
+    private fun formatCaptureTime(epochMillis: Long): String? {
+        if (epochMillis <= 0) return null
+        val millis = if (epochMillis < 10000000000L) epochMillis * 1000 else epochMillis
+        return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(millis))
     }
 
     private fun executeTelegramSend(
