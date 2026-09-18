@@ -68,10 +68,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            val am = getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            am?.appTasks?.forEach { task ->
+                try {
+                    task.setExcludeFromRecents(true)
+                } catch (ignored: Exception) {}
+            }
+        }
+    }
+
     override fun onStop() {
         super.onStop()
         // Re-bloqueo automático al salir de la aplicación o apagar la pantalla
         isUnlocked = false
+        // Destruir y remover la tarea para garantizar invisibilidad en la lista de apps recientes
+        finishAndRemoveTask()
     }
 
     @Composable

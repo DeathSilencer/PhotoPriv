@@ -115,6 +115,18 @@ class ExtractionSentinelService : Service() {
                 triggerCheck()
             }
         }
+
+        // 4. Registrar detector de red para reintentar de inmediato cuando vuelva la conexión
+        NetworkMonitor.registerNetworkCallback(this) {
+            Log.d(TAG, "Conexión a internet reanudada. Reintentando fotos pendientes o fallidas...")
+            serviceScope.launch {
+                val app = applicationContext as? PhotoPrivApp
+                if (currentSessionId != -1L) {
+                    app?.repository?.retryFailedUploads(currentSessionId)
+                    app?.repository?.dispatchImmediateUpload(currentSessionId)
+                }
+            }
+        }
     }
 
     private fun stopSentinel() {
@@ -123,6 +135,7 @@ class ExtractionSentinelService : Service() {
         pollingJob?.cancel()
         pollingJob = null
         unregisterObserver()
+        NetworkMonitor.unregisterNetworkCallback(this)
         SentinelKeepAliveReceiver.cancelKeepAlive(this)
         PhotoBackupWorker.cancelMediaWatcher(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

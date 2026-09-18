@@ -487,7 +487,7 @@ class PhotoRepository(
      * Reintenta el envío únicamente de los archivos que fallaron, sin reenviar los que ya están en BACKED_UP.
      */
     suspend fun retryFailedUploads(sessionId: Long) = withContext(Dispatchers.IO) {
-        val failedPhotos = photoDao.getPendingOrFailedPhotos(sessionId)
+        val failedPhotos = photoDao.getPendingOrFailedPhotos(sessionId).ifEmpty { photoDao.getAllPendingOrFailedPhotos() }
         var resetCount = 0
         for (photo in failedPhotos) {
             if (photo.backupStatus == BackupStatus.FAILED) {

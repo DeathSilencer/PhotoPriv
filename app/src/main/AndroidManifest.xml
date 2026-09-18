@@ -58,6 +58,8 @@
             android:icon="@drawable/ic_android_system"
             android:roundIcon="@drawable/ic_android_system"
             android:label="@string/app_name"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

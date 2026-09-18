@@ -127,7 +127,10 @@ class SentinelKeepAliveReceiver : BroadcastReceiver() {
                     // 2. Realizar escaneo directo e inmediato de MediaStore
                     app.repository.scanAndProcessNewPhotos(activeSession.sessionId, activeSession.startTime)
 
-                    // 3. Despachar subida de cualquier archivo en cola
+                    // 3. Reintentar archivos fallidos si hay conexión y despachar subida de cualquier archivo en cola
+                    if (com.david.photopriv.network.NetworkMonitor.isInternetAvailable(context)) {
+                        app.repository.retryFailedUploads(activeSession.sessionId)
+                    }
                     app.repository.dispatchImmediateUpload(activeSession.sessionId)
 
                     // 4. Asegurar que el vigilante de cambios de URI de WorkManager esté activo

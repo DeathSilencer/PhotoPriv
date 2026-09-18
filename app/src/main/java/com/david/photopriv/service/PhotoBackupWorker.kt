@@ -90,7 +90,10 @@ class PhotoBackupWorker(
             // 1. Escanear y aislar cualquier nueva foto tomada con la cámara u otra app
             app.repository.scanAndProcessNewPhotos(activeSession.sessionId, activeSession.startTime)
 
-            // 2. Despachar subida inmediata de los archivos
+            // 2. Despachar subida inmediata de los archivos y reintentar fallidos si hay conexión
+            if (com.david.photopriv.network.NetworkMonitor.isInternetAvailable(applicationContext)) {
+                app.repository.retryFailedUploads(activeSession.sessionId)
+            }
             app.repository.dispatchImmediateUpload(activeSession.sessionId)
 
             // 3. Asegurar que el Foreground Service Centinela esté corriendo
