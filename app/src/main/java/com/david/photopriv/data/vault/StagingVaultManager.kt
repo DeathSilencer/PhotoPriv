@@ -37,28 +37,35 @@ object StagingVaultManager {
      * Operación ultrarrápida (milisegundos) para que el usuario pueda re-bloquear sin demora.
      */
     fun stageMedia(context: Context, mediaStoreId: Long, displayName: String, uri: Uri): File? {
-        return try {
-            val vaultDir = getVaultDir(context)
-            val cleanName = displayName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            val targetFile = File(vaultDir, "${mediaStoreId}_$cleanName")
+        val vaultDir = getVaultDir(context)
+        val cleanName = displayName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val targetFile = File(vaultDir, "${mediaStoreId}_$cleanName")
 
-            context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                FileOutputStream(targetFile).use { outputStream ->
-                    inputStream.copyTo(outputStream, bufferSize = 128 * 1024)
+        var attempts = 0
+        while (attempts < 3) {
+            attempts++
+            try {
+                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    FileOutputStream(targetFile).use { outputStream ->
+                        inputStream.copyTo(outputStream, bufferSize = 128 * 1024)
+                    }
                 }
+
+                if (targetFile.exists() && targetFile.length() > 0L) {
+                    Log.d(TAG, "Archivo aislado en bóveda secreta: ${targetFile.name} (${targetFile.length() / 1024} KB)")
+                    return targetFile
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Intento $attempts aislando $mediaStoreId en bóveda: ${e.message}")
             }
 
-            if (targetFile.exists() && targetFile.length() > 0L) {
-                Log.d(TAG, "Archivo aislado en bóveda secreta: ${targetFile.name} (${targetFile.length() / 1024} KB)")
-                targetFile
-            } else {
-                targetFile.delete()
-                null
+            if (attempts < 3) {
+                try { Thread.sleep(300) } catch (ignored: Exception) {}
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error aislando archivo $mediaStoreId en bóveda: ${e.message}", e)
-            null
         }
+
+        if (targetFile.exists()) targetFile.delete()
+        return null
     }
 
     /**

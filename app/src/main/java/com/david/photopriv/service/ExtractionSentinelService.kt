@@ -134,16 +134,32 @@ class ExtractionSentinelService : Service() {
             }
         }
 
-        contentResolver.registerContentObserver(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            true,
-            contentObserver!!
-        )
-        contentResolver.registerContentObserver(
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-            true,
-            contentObserver!!
-        )
+        try {
+            contentResolver.registerContentObserver(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                true,
+                contentObserver!!
+            )
+            contentResolver.registerContentObserver(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                true,
+                contentObserver!!
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                contentResolver.registerContentObserver(
+                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    true,
+                    contentObserver!!
+                )
+                contentResolver.registerContentObserver(
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    true,
+                    contentObserver!!
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error registrando ContentObserver: ${e.message}")
+        }
     }
 
 

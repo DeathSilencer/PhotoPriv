@@ -27,8 +27,8 @@ object MediaStoreScanner {
         alreadyTrackedIds: Set<Long>
     ): List<TrackedPhoto> {
         val newMedia = mutableListOf<TrackedPhoto>()
-        // Margen de seguridad de 10 segundos por posibles desfases leves de reloj del sistema
-        val threshold = sessionStartTimeSeconds - 10
+        // Margen de seguridad de 30 segundos por posibles desfases leves de reloj del sistema o apertura previa de la cámara
+        val threshold = (sessionStartTimeSeconds - 30).coerceAtLeast(0L)
 
         // 1. Escanear Imágenes
         newMedia.addAll(
@@ -72,16 +72,19 @@ object MediaStoreScanner {
             MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.SIZE,
             MediaStore.MediaColumns.MIME_TYPE,
-            MediaStore.MediaColumns.DATE_TAKEN
+            MediaStore.MediaColumns.DATE_TAKEN,
+            MediaStore.MediaColumns.DATE_MODIFIED
         ).apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 add(MediaStore.MediaColumns.IS_PENDING)
             }
         }.toTypedArray()
 
-        // Filtro estricto: solo archivos cuyo DATE_ADDED sea igual o posterior al inicio de la sesión
-        val selection = "${MediaStore.MediaColumns.DATE_ADDED} >= ?"
-        val selectionArgs = arrayOf(sessionStartTimeSeconds.toString())
+        // Filtro robusto: captura archivos creados, modificados o tomados en la sesión activa
+        // (esencial para fotos tomadas con la cámara que guardan DATE_TAKEN o DATE_MODIFIED)
+        val thresholdStr = sessionStartTimeSeconds.toString()
+        val selection = "(${MediaStore.MediaColumns.DATE_ADDED} >= ? OR ${MediaStore.MediaColumns.DATE_MODIFIED} >= ? OR (${MediaStore.MediaColumns.DATE_TAKEN} / 1000) >= ?)"
+        val selectionArgs = arrayOf(thresholdStr, thresholdStr, thresholdStr)
         val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
 
         try {
@@ -108,7 +111,7 @@ object MediaStoreScanner {
                         continue
                     }
 
-                    // Si el archivo todavía se está escribiendo por Google Fotos (IS_PENDING = 1), esperar al siguiente ciclo
+                    // Si el archivo todavía se está escribiendo (IS_PENDING = 1), esperar al siguiente ciclo
                     if (isPendingCol >= 0 && cursor.getInt(isPendingCol) == 1) {
                         Log.d(TAG, "Archivo $id aún en escritura (IS_PENDING = 1). Se procesará al finalizar.")
                         continue
@@ -122,14 +125,33 @@ object MediaStoreScanner {
 
                     val contentUri = ContentUris.withAppendedId(baseUri, id)
 
-                    // Si el tamaño reportado es 0, comprobar tamaño real del descriptor
+                    // Si el tamaño reportado en la BD es 0 o negativo (típico en fotos de la cámara donde MediaScanner aún no actualiza SIZE),
+                    // consultar el tamaño real mediante canal de archivo en disco o flujo de entrada
                     if (size <= 0L) {
                         size = try {
-                            context.contentResolver.openFileDescriptor(contentUri, "r")?.use { it.statSize } ?: 0L
+                            context.contentResolver.openFileDescriptor(contentUri, "r")?.use { pfd ->
+                                val stat = pfd.statSize
+                                if (stat > 0L) {
+                                    stat
+                                } else {
+                                    java.io.FileInputStream(pfd.fileDescriptor).channel.size()
+                                }
+                            } ?: 0L
                         } catch (e: Exception) { 0L }
 
                         if (size <= 0L) {
-                            // Aún vacío o no listo, reintentar en el próximo sondeo
+                            size = try {
+                                context.contentResolver.openInputStream(contentUri)?.use { stream ->
+                                    val buffer = ByteArray(8192)
+                                    val read = stream.read(buffer)
+                                    if (read > 0) read.toLong() else 0L
+                                } ?: 0L
+                            } catch (e: Exception) { 0L }
+                        }
+
+                        if (size <= 0L) {
+                            // Aún vacío o bloqueado por el procesamiento de la cámara, reintentar en el próximo sondeo
+                            Log.d(TAG, "Archivo $id ($name) aún sin bytes en disco. Se procesará en el siguiente ciclo.")
                             continue
                         }
                     }
