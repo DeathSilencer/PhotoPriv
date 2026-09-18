@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,6 +78,15 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
 
     val stats = viewModel.computeStats(sessionPhotos)
     val isSessionActive = activeSession != null
+
+    // Filtro de Sigilo Total:
+    // Los archivos que ya están enviados a Telegram (BACKED_UP) Y que ya regresaron a la Carpeta Bloqueada (isReProtected)
+    // se eliminan automáticamente del menú/lista para no dejar historial ni miniaturas ni pruebas en pantalla.
+    // Solo permanecen visibles los archivos pendientes de subida, los que hayan fallado (para reintentar)
+    // o los que sigan expuestos en la galería pública sin re-bloquear.
+    val visiblePhotos = remember(sessionPhotos) {
+        sessionPhotos.filterNot { it.backupStatus == BackupStatus.BACKED_UP && it.isReProtected }
+    }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
 
@@ -229,12 +239,15 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
-                                        text = "¡100% Protegidos!",
+                                        text = if (stats.backedUp == stats.total) "🔒 ¡100% Protegidos y Respaldados!" else "¡100% Protegidos!",
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF1B5E20)
                                     )
                                     Text(
-                                        text = "Todos los archivos extraídos han regresado a la Carpeta Bloqueada.",
+                                        text = if (stats.backedUp == stats.total)
+                                            "Todos los archivos están a salvo en la Carpeta Bloqueada y respaldados en Telegram. El historial visual fue purgado."
+                                        else
+                                            "Todos los archivos extraídos han regresado a la Carpeta Bloqueada.",
                                         fontSize = 12.sp,
                                         color = Color(0xFF1B5E20)
                                     )
@@ -253,7 +266,10 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Archivos Auditados (${sessionPhotos.size})",
+                        text = if (visiblePhotos.size < sessionPhotos.size)
+                            "Archivos Pendientes (${visiblePhotos.size})"
+                        else
+                            "Archivos Auditados (${visiblePhotos.size})",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -274,7 +290,7 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
                 }
             }
 
-            if (sessionPhotos.isEmpty()) {
+            if (visiblePhotos.isEmpty()) {
                 item {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -289,25 +305,28 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Icon(
-                                Icons.Default.Security,
+                                imageVector = if (stats.total > 0) Icons.Default.CheckCircle else Icons.Default.Security,
                                 contentDescription = null,
                                 modifier = Modifier.size(48.dp),
-                                tint = MaterialTheme.colorScheme.outline
+                                tint = if (stats.total > 0) Color(0xFF16A34A) else MaterialTheme.colorScheme.outline
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = if (isSessionActive)
+                                text = if (stats.total > 0 && stats.backedUp == stats.total && stats.unprotected == 0)
+                                    "🔒 Historial purgado: los ${stats.total} archivos ya fueron respaldados en Telegram y protegidos en la Carpeta Bloqueada. Cero rastros ni miniaturas en pantalla."
+                                else if (isSessionActive)
                                     "Esperando que saques fotos o videos de la Carpeta Bloqueada..."
                                 else
                                     "Inicia una sesión para comenzar a auditar.",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
                 }
             } else {
-                items(sessionPhotos, key = { it.mediaStoreId }) { photo ->
+                items(visiblePhotos, key = { it.mediaStoreId }) { photo ->
                     PhotoChecklistCard(
                         photo = photo,
                         onOpenInGallery = { viewModel.openInGooglePhotos(photo) },
