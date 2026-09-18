@@ -47,6 +47,9 @@ class BootReceiver : BroadcastReceiver() {
                         } else {
                             context.startService(serviceIntent)
                         }
+                        // Armar guardianes 24/7 de inmediato tras reinicio
+                        SentinelKeepAliveReceiver.scheduleKeepAlive(context)
+                        com.david.photopriv.service.PhotoBackupWorker.scheduleMediaWatcher(context)
                     } else {
                         Log.d(TAG, "No hay sesiones activas. Centinela permanece inactivo.")
                     }

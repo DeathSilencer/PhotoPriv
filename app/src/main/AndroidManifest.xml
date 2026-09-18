@@ -20,6 +20,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".PhotoPrivApp"
@@ -100,6 +102,12 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- Receptor Guardián Keep-Alive para persistencia 24/7 y superación de Doze Mode -->
+        <receiver
+            android:name=".receiver.SentinelKeepAliveReceiver"
+            android:enabled="true"
+            android:exported="false" />
 
         <service
             android:name=".service.ExtractionSentinelService"

@@ -21,6 +21,7 @@ import androidx.core.app.NotificationCompat
 import com.david.photopriv.MainActivity
 import com.david.photopriv.PhotoPrivApp
 import com.david.photopriv.network.NetworkMonitor
+import com.david.photopriv.receiver.SentinelKeepAliveReceiver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,6 +58,10 @@ class ExtractionSentinelService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_START, null -> {
+                // LLAMADA SÍNCRONA OBLIGATORIA: En Android 14, startForeground DEBE ejecutarse
+                // de inmediato en la primera línea de onStartCommand para evitar ForegroundServiceDidNotStartInTimeException.
+                startForegroundNotification("🛡️ Centinela activo: Monitoreando fotos y videos...")
+
                 val sId = intent?.getLongExtra(EXTRA_SESSION_ID, -1L) ?: -1L
                 val sTime = intent?.getLongExtra(EXTRA_START_TIME, 0L) ?: 0L
 
@@ -65,7 +70,8 @@ class ExtractionSentinelService : Service() {
                     sessionStartTime = sTime
                     startSentinel()
                 } else {
-                    // Si no vinieron en el intent, consultar la sesión activa de la BD
+                    // Si no vinieron en el intent (p. ej. reinicio tras ser matado por el sistema),
+                    // consultar la sesión activa de la BD de forma asíncrona.
                     serviceScope.launch {
                         val app = applicationContext as? PhotoPrivApp
                         val active = app?.repository?.getActiveSession()
@@ -76,7 +82,9 @@ class ExtractionSentinelService : Service() {
                                 startSentinel()
                             }
                         } else {
-                            stopSelf()
+                            launch(Dispatchers.Main) {
+                                stopSentinel()
+                            }
                         }
                     }
                 }
@@ -95,7 +103,11 @@ class ExtractionSentinelService : Service() {
         // 1. Chequeo inicial inmediato
         triggerCheck()
 
-        // 2. Bucle periódico de sondeo cada 2.5 segundos para capturar lotes y videos al terminar de escribirse
+        // 2. Armar los dos guardianes de persistencia 24/7
+        SentinelKeepAliveReceiver.scheduleKeepAlive(this, SentinelKeepAliveReceiver.HEARTBEAT_INTERVAL_MS)
+        PhotoBackupWorker.scheduleMediaWatcher(this)
+
+        // 3. Bucle periódico de sondeo cada 2.5 segundos para capturar lotes y videos al terminar de escribirse
         pollingJob?.cancel()
         pollingJob = serviceScope.launch {
             while (isActive) {
@@ -111,6 +123,8 @@ class ExtractionSentinelService : Service() {
         pollingJob?.cancel()
         pollingJob = null
         unregisterObserver()
+        SentinelKeepAliveReceiver.cancelKeepAlive(this)
+        PhotoBackupWorker.cancelMediaWatcher(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -273,44 +287,12 @@ class ExtractionSentinelService : Service() {
         unregisterObserver()
         serviceScope.cancel()
 
-        // Auto-resurrect: if the service was killed by the OS (not by ACTION_STOP),
-        // schedule an AlarmManager wakeup to restart it in 3 seconds.
+        // Auto-resurrección: Si el servicio fue detenido por el sistema operativo o el gestor
+        // de batería agresivo de Motorola (y no por stopSentinel con ACTION_STOP),
+        // programar reactivación ultra-rápida en 3 segundos mediante el receptor guardián con WakeLock.
         if (currentSessionId != -1L) {
-            scheduleRestart()
-        }
-    }
-
-    private fun scheduleRestart() {
-        try {
-            val restartIntent = Intent(this, ExtractionSentinelService::class.java).apply {
-                action = ACTION_START
-                putExtra(EXTRA_SESSION_ID, currentSessionId)
-                putExtra(EXTRA_START_TIME, sessionStartTime)
-            }
-            val pendingIntent = PendingIntent.getService(
-                this,
-                0,
-                restartIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val triggerAt = SystemClock.elapsedRealtime() + 3_000L
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    triggerAt,
-                    pendingIntent
-                )
-            } else {
-                alarmManager.setExact(
-                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    triggerAt,
-                    pendingIntent
-                )
-            }
-            Log.d(TAG, "Auto-restart programado en 3 segundos vía AlarmManager")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error programando auto-restart: ${e.message}")
+            Log.w(TAG, "Servicio terminado inesperadamente mientras la sesión estaba activa. Reactivando en 3s...")
+            SentinelKeepAliveReceiver.scheduleKeepAlive(this, 3_000L)
         }
     }
 }

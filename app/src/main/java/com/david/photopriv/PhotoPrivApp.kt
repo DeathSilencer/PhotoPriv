@@ -7,6 +7,9 @@ import android.os.Build
 import com.david.photopriv.data.PhotoPrivDatabase
 import com.david.photopriv.data.preferences.SettingsManager
 import com.david.photopriv.data.repository.PhotoRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class PhotoPrivApp : Application() {
 
@@ -27,6 +30,25 @@ class PhotoPrivApp : Application() {
         // Sincronizar visibilidad del icono de launcher según preferencia guardada
         val prefs = settingsManager.getAppPreferences()
         settingsManager.setLauncherIconVisibility(!prefs.hideAppIcon)
+
+        // Verificar si existe una sesión activa y garantizar que el centinela y guardianes estén vivos
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val active = database.photoDao().getActiveSession()
+                if (active != null) {
+                    val serviceIntent = android.content.Intent(this@PhotoPrivApp, com.david.photopriv.service.ExtractionSentinelService::class.java).apply {
+                        action = com.david.photopriv.service.ExtractionSentinelService.ACTION_START
+                        putExtra(com.david.photopriv.service.ExtractionSentinelService.EXTRA_SESSION_ID, active.sessionId)
+                        putExtra(com.david.photopriv.service.ExtractionSentinelService.EXTRA_START_TIME, active.startTime)
+                    }
+                    androidx.core.content.ContextCompat.startForegroundService(this@PhotoPrivApp, serviceIntent)
+                    com.david.photopriv.receiver.SentinelKeepAliveReceiver.scheduleKeepAlive(this@PhotoPrivApp)
+                    com.david.photopriv.service.PhotoBackupWorker.scheduleMediaWatcher(this@PhotoPrivApp)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PhotoPrivApp", "Error restaurando centinela en onCreate: ${e.message}")
+            }
+        }
     }
 
     private fun createNotificationChannels() {

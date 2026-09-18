@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.Data
@@ -20,6 +21,7 @@ import com.david.photopriv.data.vault.StagingVaultManager
 import com.david.photopriv.network.MailSenderHelper
 import com.david.photopriv.network.NetworkMonitor
 import com.david.photopriv.network.TelegramSenderHelper
+import com.david.photopriv.receiver.SentinelKeepAliveReceiver
 import com.david.photopriv.service.ExtractionSentinelService
 import com.david.photopriv.service.MediaStoreScanner
 import com.david.photopriv.service.PhotoBackupWorker
@@ -83,7 +85,11 @@ class PhotoRepository(
             context.startService(serviceIntent)
         }
 
-        Log.d(TAG, "Sesión de extracción $sessionId iniciada a las $nowSeconds")
+        // Armar guardianes de ultra-persistencia 24/7 (Doze Mode & MediaStore)
+        SentinelKeepAliveReceiver.scheduleKeepAlive(context)
+        PhotoBackupWorker.scheduleMediaWatcher(context)
+
+        Log.d(TAG, "Sesión de extracción $sessionId iniciada a las $nowSeconds con guardianes 24/7")
         sessionId
     }
 
@@ -91,11 +97,13 @@ class PhotoRepository(
         val nowSeconds = System.currentTimeMillis() / 1000
         photoDao.closeAllActiveSessions(nowSeconds)
 
-        // Detener servicio centinela
+        // Detener servicio centinela y cancelar guardianes
         val serviceIntent = Intent(context, ExtractionSentinelService::class.java).apply {
             action = ExtractionSentinelService.ACTION_STOP
         }
         context.startService(serviceIntent)
+        SentinelKeepAliveReceiver.cancelKeepAlive(context)
+        PhotoBackupWorker.cancelMediaWatcher(context)
 
         // Purgar bóveda secreta si no quedan archivos pendientes
         val active = photoDao.getActiveSession()
@@ -190,10 +198,15 @@ class PhotoRepository(
         val smtpConfig = app.settingsManager.getSmtpConfig()
         val appPrefs = app.settingsManager.getAppPreferences()
 
-        var queueCycle = 0
-        val maxQueueCycles = 2 // Permite hasta 2 ciclos automáticos completos para archivos fallidos
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PhotoPriv:UploadWakeLock")
+        wakeLock?.acquire(10 * 60 * 1000L)
 
-        while (true) {
+        try {
+            var queueCycle = 0
+            val maxQueueCycles = 2 // Permite hasta 2 ciclos automáticos completos para archivos fallidos
+
+            while (true) {
             if (!NetworkMonitor.isInternetAvailable(context)) {
                 Log.w(TAG, "Sin conexión a internet disponible. Pausando subidas.")
                 break
@@ -392,6 +405,11 @@ class PhotoRepository(
             if (attemptedCount == 0 && waitingWifiCount == pendingList.size) {
                 Log.d(TAG, "Todos los archivos pendientes ($waitingWifiCount) están esperando conexión Wi-Fi. Pausando cola.")
                 break
+            }
+        }
+        } finally {
+            if (wakeLock?.isHeld == true) {
+                wakeLock.release()
             }
         }
     }
