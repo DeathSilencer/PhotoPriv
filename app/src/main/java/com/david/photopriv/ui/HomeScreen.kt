@@ -82,30 +82,13 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
     val stats = viewModel.computeStats(sessionPhotos)
     val isSessionActive = activeSession != null
 
-    // Filtro Inteligente de Sigilo Total y Purga Automática del Dashboard:
-    // 1. Archivos pendientes o fallidos -> Siempre visibles para ver el progreso o reintentar.
-    // 2. Archivos respaldados en Telegram (BACKED_UP):
-    //    a) Si ya regresaron a la Carpeta Bloqueada (isReProtected) -> Desaparecen de inmediato.
-    //    b) Si fueron capturados en vivo por cámara o recibidos por chat (WhatsApp, Instagram, Messenger, etc.) ->
-    //       Desaparecen de inmediato al enviarse (estas fotos no van a la Carpeta Privada).
-    //    c) Si provienen de la Carpeta Privada pero llevan más de 40 minutos respaldados sin re-bloquearse ->
-    //       Se purgan automáticamente para no dejar rastros en el dashboard indefinidamente.
+    // Filtro de Sigilo Total:
+    // Los archivos que ya están enviados a Telegram (BACKED_UP) Y que ya regresaron a la Carpeta Bloqueada (isReProtected)
+    // se eliminan automáticamente del panel para no dejar historial ni miniaturas en pantalla.
+    // Solo permanecen visibles los archivos pendientes de subida, los que hayan fallado (para reintentar)
+    // o los que sigan expuestos en la galería pública sin haber regresado a la Carpeta Privada.
     val visiblePhotos = remember(sessionPhotos) {
-        val now = System.currentTimeMillis()
-        val FORTY_MINUTES_MS = 40 * 60 * 1000L
-
-        sessionPhotos.filterNot { photo ->
-            if (photo.backupStatus != BackupStatus.BACKED_UP) {
-                false
-            } else if (photo.isReProtected) {
-                true
-            } else if (isChatOrLiveMedia(photo)) {
-                true
-            } else {
-                val backupTime = photo.backupTimestamp ?: (photo.dateAdded * 1000L)
-                (now - backupTime) >= FORTY_MINUTES_MS
-            }
-        }
+        sessionPhotos.filterNot { it.backupStatus == BackupStatus.BACKED_UP && it.isReProtected }
     }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -712,36 +695,6 @@ fun PhotoChecklistCard(
             }
         }
     }
-}
-
-/**
- * Detecta si un archivo proviene de aplicaciones de mensajería (WhatsApp, Instagram, Messenger, etc.)
- * o si es una captura recién tomada con la cámara, diferenciándola de archivos históricos
- * que fueron extraídos de la Carpeta Bloqueada de Google Fotos.
- */
-private fun isChatOrLiveMedia(photo: TrackedPhoto): Boolean {
-    val name = photo.displayName.lowercase()
-    // 1. Detección por firmas de nombres de archivo de apps de mensajería y redes sociales
-    if (name.contains("wa") || name.contains("whatsapp") ||
-        name.contains("instagram") || name.contains("received_") ||
-        name.contains("messenger") || name.contains("snapchat") ||
-        name.contains("screenshot") || name.contains("telegram") ||
-        name.contains("download")) {
-        return true
-    }
-
-    // 2. Detección de fotos en vivo de la cámara:
-    // Si la captura se tomó hace menos de 10 minutos (600s) respecto a cuando se detectó en disco,
-    // es una foto tomada en ese instante por la cámara y no una foto antigua extraída de la Carpeta Bloqueada.
-    if (photo.dateTaken > 0) {
-        val dateTakenSec = if (photo.dateTaken > 10000000000L) photo.dateTaken / 1000 else photo.dateTaken
-        val diffSec = Math.abs(photo.dateAdded - dateTakenSec)
-        if (diffSec < 600) {
-            return true
-        }
-    }
-
-    return false
 }
 
 @Composable
