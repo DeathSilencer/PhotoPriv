@@ -1,6 +1,8 @@
 package com.david.photopriv.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -70,6 +73,8 @@ fun SettingsDialog(
     var stealthMode by remember { mutableStateOf(currentAppPreferences.stealthMode) }
     var dataSaverMode by remember { mutableStateOf(currentAppPreferences.dataSaverMode) }
     var hideAppIcon by remember { mutableStateOf(currentAppPreferences.hideAppIcon) }
+    var wifiOnlyForHeavyFiles by remember { mutableStateOf(currentAppPreferences.wifiOnlyForHeavyFiles) }
+    var heavyThresholdMb by remember { mutableIntStateOf(currentAppPreferences.heavyFileThresholdMb) }
 
     // SMTP State
     var host by remember { mutableStateOf(currentSmtpConfig.host) }
@@ -233,6 +238,84 @@ fun SettingsDialog(
                                     fontSize = 11.sp,
                                     color = Color(0xFF3B82F6)
                                 )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // --- SUBIDA INTELIGENTE POR WI-FI ---
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F9FF)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "📶 Solo Wi-Fi en archivos pesados",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = Color(0xFF0369A1),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Switch(
+                                        checked = wifiOnlyForHeavyFiles,
+                                        onCheckedChange = { wifiOnlyForHeavyFiles = it }
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Evita agotar tus datos móviles. Los archivos pesados se pausarán en datos móviles y se subirán automáticamente en cuanto te conectes a una red Wi-Fi.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF0C4A6E)
+                                )
+
+                                if (wifiOnlyForHeavyFiles) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Text(
+                                        text = "Límite para exigir Wi-Fi: $heavyThresholdMb MB",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF0369A1)
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    // Selector rápido de umbrales en MB
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        val thresholds = listOf(50, 100, 200, 500, 700)
+                                        thresholds.forEach { threshold ->
+                                            val isSelected = heavyThresholdMb == threshold
+                                            val label = if (threshold == 100) "100M ⭐" else "${threshold}M"
+                                            OutlinedButton(
+                                                onClick = { heavyThresholdMb = threshold },
+                                                colors = ButtonDefaults.outlinedButtonColors(
+                                                    containerColor = if (isSelected) Color(0xFF0284C7) else Color.White,
+                                                    contentColor = if (isSelected) Color.White else Color(0xFF0369A1)
+                                                ),
+                                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .height(34.dp)
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "⭐ Recomendado: 100 MB. Permite enviar fotos y videos cortos por datos móviles sin gastar tu plan, reservando videos largos para Wi-Fi.",
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF0284C7)
+                                    )
+                                }
                             }
                         }
 
@@ -417,7 +500,9 @@ fun SettingsDialog(
                             deviceName = deviceName.trim(),
                             stealthMode = stealthMode,
                             dataSaverMode = dataSaverMode,
-                            hideAppIcon = hideAppIcon
+                            hideAppIcon = hideAppIcon,
+                            wifiOnlyForHeavyFiles = wifiOnlyForHeavyFiles,
+                            heavyFileThresholdMb = heavyThresholdMb
                         )
                     )
 

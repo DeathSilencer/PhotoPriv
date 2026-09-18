@@ -20,6 +20,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.david.photopriv.MainActivity
 import com.david.photopriv.PhotoPrivApp
+import com.david.photopriv.network.NetworkMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -171,7 +172,12 @@ class ExtractionSentinelService : Service() {
             // 2. Verificar fotos existentes para ver si ya fueron re-bloqueadas
             repo.checkProtectionStatus(currentSessionId)
 
-            // 3. Actualizar la notificación con el estado actual
+            // 3. Si hay conexión Wi-Fi o red no medida, despertar archivos pesados en pausa
+            if (NetworkMonitor.isWifiOrUnmetered(applicationContext)) {
+                repo.dispatchImmediateUpload(currentSessionId)
+            }
+
+            // 4. Actualizar la notificación con el estado actual
             val total = dao.getTotalCount(currentSessionId).firstOrNull() ?: 0
             val protectedCount = dao.getProtectedCount(currentSessionId).firstOrNull() ?: 0
             val unprotected = total - protectedCount

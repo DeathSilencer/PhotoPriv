@@ -190,19 +190,43 @@ class PhotoRepository(
         val smtpConfig = app.settingsManager.getSmtpConfig()
         val appPrefs = app.settingsManager.getAppPreferences()
 
+        var queueCycle = 0
+        val maxQueueCycles = 2 // Permite hasta 2 ciclos automáticos completos para archivos fallidos
+
         while (true) {
             if (!NetworkMonitor.isInternetAvailable(context)) {
                 Log.w(TAG, "Sin conexión a internet disponible. Pausando subidas.")
                 break
             }
 
+            val isWifi = NetworkMonitor.isWifiOrUnmetered(context)
+            val heavyThresholdBytes = appPrefs.heavyFileThresholdMb * 1024 * 1024L
+
             // Consultar únicamente archivos que están en estado PENDING (fotos primero, videos después)
             val pendingList = photoDao.getPendingBackupPhotos(sessionId)
             if (pendingList.isEmpty()) {
+                // Si la pasada terminó y no hay pendientes, checar si hay fallidos para darles un ciclo de reintento
+                if (queueCycle < maxQueueCycles) {
+                    val failedPhotos = photoDao.getPendingOrFailedPhotos(sessionId)
+                        .filter { it.backupStatus == BackupStatus.FAILED }
+                    if (failedPhotos.isNotEmpty()) {
+                        queueCycle++
+                        Log.d(TAG, "Iniciando ciclo automático de reintento ($queueCycle/$maxQueueCycles) para ${failedPhotos.size} archivo(s) fallido(s)...")
+                        delay(4000)
+                        for (fp in failedPhotos) {
+                            photoDao.updateBackupStatus(fp.mediaStoreId, BackupStatus.PENDING, error = null)
+                        }
+                        continue
+                    }
+                }
+
                 Log.d(TAG, "No hay más archivos pendientes en la cola de subida. Destruyendo bóveda secreta...")
                 StagingVaultManager.clearVault(context)
                 break
             }
+
+            var attemptedCount = 0
+            var waitingWifiCount = 0
 
             for (media in pendingList) {
                 // 1. Doble chequeo en BD: si ya fue subido exitosamente, ignorar
@@ -211,10 +235,30 @@ class PhotoRepository(
                     continue
                 }
 
+                // Determinar tamaño para aplicar política inteligente de ahorro de datos
+                val fileSize = freshPhoto.fileSizeBytes.takeIf { it > 0 }
+                    ?: (freshPhoto.localStagingPath?.let { File(it).length() } ?: 0L)
+                val isHeavy = appPrefs.wifiOnlyForHeavyFiles && fileSize >= heavyThresholdBytes
+
+                // Si es archivo pesado y NO estamos en Wi-Fi ni red no medida, pausar y continuar con el siguiente
+                if (isHeavy && !isWifi) {
+                    val sizeMb = (fileSize / (1024 * 1024)).coerceAtLeast(1)
+                    waitingWifiCount++
+                    Log.d(TAG, "Archivo pesado detectado: ${freshPhoto.displayName} ($sizeMb MB). Pausando subida hasta conexión Wi-Fi.")
+                    photoDao.updateBackupStatus(
+                        freshPhoto.mediaStoreId,
+                        BackupStatus.PENDING,
+                        error = "📶 En pausa: esperando Wi-Fi (${sizeMb} MB)"
+                    )
+                    inFlightUploads.remove(freshPhoto.mediaStoreId)
+                    continue
+                }
+
                 // 2. Verificación en memoria: si ya está en vuelo, ignorar
                 if (!inFlightUploads.add(media.mediaStoreId)) {
                     continue
                 }
+                attemptedCount++
 
                 try {
                     var targetMedia = freshPhoto
@@ -341,6 +385,13 @@ class PhotoRepository(
                 } finally {
                     inFlightUploads.remove(media.mediaStoreId)
                 }
+            }
+
+            // Si todos los archivos pendientes estaban esperando Wi-Fi y ninguno pudo procesarse en esta vuelta,
+            // pausar el bucle para evitar consumo innecesario de CPU/batería hasta que se conecte a Wi-Fi.
+            if (attemptedCount == 0 && waitingWifiCount == pendingList.size) {
+                Log.d(TAG, "Todos los archivos pendientes ($waitingWifiCount) están esperando conexión Wi-Fi. Pausando cola.")
+                break
             }
         }
     }

@@ -645,11 +645,29 @@ fun PhotoChecklistCard(
                             }
                         }
                         BackupStatus.PENDING -> {
-                            BadgePill(
-                                text = "⏳ Pendiente",
-                                bgColor = Color(0xFFF3F4F6),
-                                textColor = Color(0xFF4B5563)
-                            )
+                            val isWaitingWifi = photo.lastError?.contains("esperando Wi-Fi", ignoreCase = true) == true
+                            if (isWaitingWifi) {
+                                val sizeMb = (photo.fileSizeBytes / (1024 * 1024)).coerceAtLeast(1)
+                                BadgePill(
+                                    text = "📶 Espera Wi-Fi ($sizeMb MB)",
+                                    bgColor = Color(0xFFEFF6FF),
+                                    textColor = Color(0xFF1D4ED8)
+                                )
+                                Text(
+                                    text = "En pausa para ahorrar datos móviles. Se subirá con Wi-Fi.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF2563EB),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            } else {
+                                BadgePill(
+                                    text = "⏳ Pendiente",
+                                    bgColor = Color(0xFFF3F4F6),
+                                    textColor = Color(0xFF4B5563)
+                                )
+                            }
                         }
                     }
                 }

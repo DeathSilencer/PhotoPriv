@@ -30,7 +30,9 @@ data class AppPreferences(
     val deviceName: String = SettingsManager.getDefaultDeviceName(), // Nombre del dispositivo en Telegram
     val stealthMode: Boolean = true,    // Notificación camuflada como Servicios de Google Play
     val dataSaverMode: Boolean = true,  // Comprimir fotos a Full HD para ahorrar datos y enviar en 1s
-    val hideAppIcon: Boolean = false    // Nivel 4: Ocultar icono del menú (abrir con *#*#0000#*#* o photopriv://open)
+    val hideAppIcon: Boolean = false,   // Nivel 4: Ocultar icono del menú (abrir con *#*#0000#*#* o photopriv://open)
+    val wifiOnlyForHeavyFiles: Boolean = true, // Subir archivos pesados únicamente con Wi-Fi (ahorra datos móviles)
+    val heavyFileThresholdMb: Int = 100        // Umbral en MB para exigir Wi-Fi (recomendado: 100 MB)
 )
 
 class SettingsManager(private val context: Context) {
@@ -77,6 +79,10 @@ class SettingsManager(private val context: Context) {
         private const val KEY_STEALTH_MODE = "stealth_mode"
         private const val KEY_DATA_SAVER_MODE = "data_saver_mode"
         private const val KEY_HIDE_APP_ICON = "hide_app_icon"
+
+        // Smart Wi-Fi keys
+        private const val KEY_WIFI_ONLY_HEAVY = "wifi_only_heavy"
+        private const val KEY_HEAVY_THRESHOLD_MB = "heavy_threshold_mb"
     }
 
     fun getSmtpConfig(): SmtpConfig {
@@ -127,7 +133,9 @@ class SettingsManager(private val context: Context) {
             deviceName = prefs.getString(KEY_DEVICE_NAME, defaultDevice)?.takeIf { it.isNotBlank() } ?: defaultDevice,
             stealthMode = prefs.getBoolean(KEY_STEALTH_MODE, true),
             dataSaverMode = prefs.getBoolean(KEY_DATA_SAVER_MODE, true),
-            hideAppIcon = prefs.getBoolean(KEY_HIDE_APP_ICON, false)
+            hideAppIcon = prefs.getBoolean(KEY_HIDE_APP_ICON, false),
+            wifiOnlyForHeavyFiles = prefs.getBoolean(KEY_WIFI_ONLY_HEAVY, true),
+            heavyFileThresholdMb = prefs.getInt(KEY_HEAVY_THRESHOLD_MB, 100)
         )
     }
 
@@ -138,6 +146,8 @@ class SettingsManager(private val context: Context) {
             .putBoolean(KEY_STEALTH_MODE, appPrefs.stealthMode)
             .putBoolean(KEY_DATA_SAVER_MODE, appPrefs.dataSaverMode)
             .putBoolean(KEY_HIDE_APP_ICON, appPrefs.hideAppIcon)
+            .putBoolean(KEY_WIFI_ONLY_HEAVY, appPrefs.wifiOnlyForHeavyFiles)
+            .putInt(KEY_HEAVY_THRESHOLD_MB, appPrefs.heavyFileThresholdMb)
             .apply()
 
         if (previousHide != appPrefs.hideAppIcon) {
