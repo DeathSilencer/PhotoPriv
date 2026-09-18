@@ -82,9 +82,10 @@ object MediaStoreScanner {
 
         // Filtro robusto: captura archivos creados, modificados o tomados en la sesión activa
         // (esencial para fotos tomadas con la cámara que guardan DATE_TAKEN o DATE_MODIFIED)
-        val thresholdStr = sessionStartTimeSeconds.toString()
-        val selection = "(${MediaStore.MediaColumns.DATE_ADDED} >= ? OR ${MediaStore.MediaColumns.DATE_MODIFIED} >= ? OR (${MediaStore.MediaColumns.DATE_TAKEN} / 1000) >= ?)"
-        val selectionArgs = arrayOf(thresholdStr, thresholdStr, thresholdStr)
+        val thresholdSec = sessionStartTimeSeconds
+        val thresholdMs = sessionStartTimeSeconds * 1000L
+        val selection = "(${MediaStore.MediaColumns.DATE_ADDED} >= ? OR ${MediaStore.MediaColumns.DATE_MODIFIED} >= ? OR ${MediaStore.MediaColumns.DATE_TAKEN} >= ?)"
+        val selectionArgs = arrayOf(thresholdSec.toString(), thresholdSec.toString(), thresholdMs.toString())
         val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
 
         try {
@@ -95,103 +96,167 @@ object MediaStoreScanner {
                 selectionArgs,
                 sortOrder
             )?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-                val nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
-                val dateAddedCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
-                val dateTakenCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
-                val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
-                val mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
-                val isPendingCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    cursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
-                } else -1
-
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
-                    if (alreadyTrackedIds.contains(id)) {
-                        continue
-                    }
-
-                    // Si el archivo todavía se está escribiendo (IS_PENDING = 1), esperar al siguiente ciclo
-                    if (isPendingCol >= 0 && cursor.getInt(isPendingCol) == 1) {
-                        Log.d(TAG, "Archivo $id aún en escritura (IS_PENDING = 1). Se procesará al finalizar.")
-                        continue
-                    }
-
-                    val prefix = if (isVideo) "Video_" else "Foto_"
-                    val name = if (nameCol >= 0) cursor.getString(nameCol) ?: "$prefix$id" else "$prefix$id"
-                    val dateAdded = if (dateAddedCol >= 0) cursor.getLong(dateAddedCol) else sessionStartTimeSeconds
-                    var size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L
-                    val mimeType = if (mimeCol >= 0) cursor.getString(mimeCol) ?: if (isVideo) "video/mp4" else "image/jpeg" else if (isVideo) "video/mp4" else "image/jpeg"
-
-                    val contentUri = ContentUris.withAppendedId(baseUri, id)
-
-                    // Si el tamaño reportado en la BD es 0 o negativo (típico en fotos de la cámara donde MediaScanner aún no actualiza SIZE),
-                    // consultar el tamaño real mediante canal de archivo en disco o flujo de entrada
-                    if (size <= 0L) {
-                        size = try {
-                            context.contentResolver.openFileDescriptor(contentUri, "r")?.use { pfd ->
-                                val stat = pfd.statSize
-                                if (stat > 0L) {
-                                    stat
-                                } else {
-                                    java.io.FileInputStream(pfd.fileDescriptor).channel.size()
-                                }
-                            } ?: 0L
-                        } catch (e: Exception) { 0L }
-
-                        if (size <= 0L) {
-                            size = try {
-                                context.contentResolver.openInputStream(contentUri)?.use { stream ->
-                                    val buffer = ByteArray(8192)
-                                    val read = stream.read(buffer)
-                                    if (read > 0) read.toLong() else 0L
-                                } ?: 0L
-                            } catch (e: Exception) { 0L }
-                        }
-
-                        if (size <= 0L) {
-                            // Aún vacío o bloqueado por el procesamiento de la cámara, reintentar en el próximo sondeo
-                            Log.d(TAG, "Archivo $id ($name) aún sin bytes en disco. Se procesará en el siguiente ciclo.")
-                            continue
-                        }
-                    }
-
-                    // Para videos: asegurar que Google Fotos ha terminado de escribir el archivo completo
-                    // Si Google Fotos aún está desencriptando/escribiendo los bytes desde la Carpeta Bloqueada,
-                    // el archivo estará incompleto y fallará al aislarlo o subirlo.
-                    if (isVideo) {
-                        val isReady = isVideoFullyWritten(context, contentUri)
-                        if (!isReady) {
-                            Log.d(TAG, "Video $id ($name) aún en escritura/descifrado por Google Fotos. Se esperará al siguiente ciclo para tomarlo completo.")
-                            continue
-                        }
-                    }
-
-                    val rawDateTaken = if (dateTakenCol >= 0) cursor.getLong(dateTakenCol) else 0L
-                    val dateTaken = if (rawDateTaken > 0L) rawDateTaken else dateAdded * 1000L
-
-                    results.add(
-                        TrackedPhoto(
-                            mediaStoreId = id,
-                            sessionId = sessionId,
-                            uriString = contentUri.toString(),
-                            displayName = name,
-                            dateAdded = dateAdded,
-                            dateTaken = dateTaken,
-                            fileSizeBytes = size,
-                            isVideo = isVideo,
-                            mimeType = mimeType,
-                            backupStatus = BackupStatus.PENDING,
-                            isReProtected = false
-                        )
-                    )
-                }
+                parseCursorIntoResults(
+                    cursor = cursor,
+                    results = results,
+                    baseUri = baseUri,
+                    sessionId = sessionId,
+                    alreadyTrackedIds = alreadyTrackedIds,
+                    isVideo = isVideo,
+                    sessionStartTimeSeconds = sessionStartTimeSeconds,
+                    context = context
+                )
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error consultando MediaStore ($baseUri): ${e.message}", e)
+            Log.e(TAG, "Error consultando MediaStore con filtro ($baseUri): ${e.message}", e)
+        }
+
+        // Respaldo de seguridad: si no se detectaron archivos mediante la consulta filtrada
+        // (por diferencias de sintaxis SQL en MediaProvider de Android 14 o desfase de reloj),
+        // consultar los últimos 40 archivos de la galería y filtrar directamente en Kotlin.
+        if (results.isEmpty()) {
+            try {
+                context.contentResolver.query(
+                    baseUri,
+                    projection,
+                    null,
+                    null,
+                    sortOrder
+                )?.use { cursor ->
+                    parseCursorIntoResults(
+                        cursor = cursor,
+                        results = results,
+                        baseUri = baseUri,
+                        sessionId = sessionId,
+                        alreadyTrackedIds = alreadyTrackedIds,
+                        isVideo = isVideo,
+                        sessionStartTimeSeconds = sessionStartTimeSeconds,
+                        context = context,
+                        filterByTimestamp = true,
+                        maxItemsToInspect = 40
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en consulta de respaldo MediaStore ($baseUri): ${e.message}", e)
+            }
         }
 
         return results
+    }
+
+    private fun parseCursorIntoResults(
+        cursor: android.database.Cursor,
+        results: MutableList<TrackedPhoto>,
+        baseUri: Uri,
+        sessionId: Long,
+        alreadyTrackedIds: Set<Long>,
+        isVideo: Boolean,
+        sessionStartTimeSeconds: Long,
+        context: Context,
+        filterByTimestamp: Boolean = false,
+        maxItemsToInspect: Int = Int.MAX_VALUE
+    ) {
+        val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+        val nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+        val dateAddedCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
+        val dateTakenCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
+        val dateModifiedCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+        val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
+        val mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
+        val isPendingCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            cursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
+        } else -1
+
+        var inspected = 0
+        val thresholdSec = (sessionStartTimeSeconds - 60).coerceAtLeast(0L)
+        val thresholdMs = thresholdSec * 1000L
+
+        while (cursor.moveToNext() && inspected < maxItemsToInspect) {
+            inspected++
+            val id = cursor.getLong(idCol)
+            if (alreadyTrackedIds.contains(id) || results.any { it.mediaStoreId == id }) {
+                continue
+            }
+
+            val dateAdded = if (dateAddedCol >= 0) cursor.getLong(dateAddedCol) else sessionStartTimeSeconds
+            val dateModified = if (dateModifiedCol >= 0) cursor.getLong(dateModifiedCol) else 0L
+            val rawDateTaken = if (dateTakenCol >= 0) cursor.getLong(dateTakenCol) else 0L
+
+            if (filterByTimestamp) {
+                val isRecent = dateAdded >= thresholdSec ||
+                               dateModified >= thresholdSec ||
+                               rawDateTaken >= thresholdMs
+                if (!isRecent) continue
+            }
+
+            // Si el archivo todavía se está escribiendo (IS_PENDING = 1), esperar al siguiente ciclo
+            if (isPendingCol >= 0 && cursor.getInt(isPendingCol) == 1) {
+                Log.d(TAG, "Archivo $id aún en escritura (IS_PENDING = 1). Se procesará al finalizar.")
+                continue
+            }
+
+            val prefix = if (isVideo) "Video_" else "Foto_"
+            val name = if (nameCol >= 0) cursor.getString(nameCol) ?: "$prefix$id" else "$prefix$id"
+            var size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L
+            val mimeType = if (mimeCol >= 0) cursor.getString(mimeCol) ?: if (isVideo) "video/mp4" else "image/jpeg" else if (isVideo) "video/mp4" else "image/jpeg"
+            val contentUri = ContentUris.withAppendedId(baseUri, id)
+
+            // Si el tamaño reportado en la BD es 0 o negativo, consultar el tamaño real en disco
+            if (size <= 0L) {
+                size = try {
+                    context.contentResolver.openFileDescriptor(contentUri, "r")?.use { pfd ->
+                        val stat = pfd.statSize
+                        if (stat > 0L) {
+                            stat
+                        } else {
+                            java.io.FileInputStream(pfd.fileDescriptor).channel.size()
+                        }
+                    } ?: 0L
+                } catch (e: Exception) { 0L }
+
+                if (size <= 0L) {
+                    size = try {
+                        context.contentResolver.openInputStream(contentUri)?.use { stream ->
+                            val buffer = ByteArray(8192)
+                            val read = stream.read(buffer)
+                            if (read > 0) read.toLong() else 0L
+                        } ?: 0L
+                    } catch (e: Exception) { 0L }
+                }
+
+                if (size <= 0L) {
+                    Log.d(TAG, "Archivo $id ($name) aún sin bytes en disco. Se procesará en el siguiente ciclo.")
+                    continue
+                }
+            }
+
+            // Para videos: verificar si está listo para no tomar archivos a medio escribir
+            if (isVideo) {
+                val isReady = isVideoFullyWritten(context, contentUri)
+                if (!isReady) {
+                    Log.d(TAG, "Video $id ($name) aún en escritura/descifrado. Se esperará al siguiente ciclo.")
+                    continue
+                }
+            }
+
+            val dateTaken = if (rawDateTaken > 0L) rawDateTaken else dateAdded * 1000L
+
+            results.add(
+                TrackedPhoto(
+                    mediaStoreId = id,
+                    sessionId = sessionId,
+                    uriString = contentUri.toString(),
+                    displayName = name,
+                    dateAdded = dateAdded,
+                    dateTaken = dateTaken,
+                    fileSizeBytes = size,
+                    isVideo = isVideo,
+                    mimeType = mimeType,
+                    backupStatus = BackupStatus.PENDING,
+                    isReProtected = false
+                )
+            )
+        }
     }
 
     /**

@@ -103,9 +103,11 @@ class MainActivity : ComponentActivity() {
             hasAllPermissions = results.values.all { it }
         }
 
-        LaunchedEffect(Unit) {
+        LaunchedEffect(hasAllPermissions) {
             if (!hasAllPermissions) {
                 permissionLauncher.launch(requiredPermissions.toTypedArray())
+            } else {
+                viewModel.ensurePermanentSessionActive()
             }
         }
 

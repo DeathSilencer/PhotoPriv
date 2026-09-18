@@ -131,12 +131,18 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     isBatteryOptimized = powerManager?.isIgnoringBatteryOptimizations(context.packageName) != true
                 }
+                viewModel.refreshScan()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.ensurePermanentSessionActive()
+        viewModel.refreshScan()
     }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -203,12 +209,11 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Control de la Sesión
+            // 1. Estado del Centinela Permanente 24/7
             item {
-                SessionControlCard(
-                    isActive = isSessionActive,
-                    onStartClick = { viewModel.startExtractionSession() },
-                    onStopClick = { viewModel.stopExtractionSession() }
+                SentinelStatusCard(
+                    isRefreshing = isRefreshing,
+                    onForceScan = { viewModel.refreshScan() }
                 )
             }
 
@@ -445,10 +450,8 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
                             Text(
                                 text = if (stats.total > 0 && stats.backedUp == stats.total && stats.unprotected == 0)
                                     "🔒 Historial purgado: los ${stats.total} archivos ya fueron respaldados en Telegram y protegidos en la Carpeta Bloqueada. Cero rastros ni miniaturas en pantalla."
-                                else if (isSessionActive)
-                                    "Esperando que saques fotos o videos de la Carpeta Bloqueada..."
                                 else
-                                    "Inicia una sesión para comenzar a auditar.",
+                                    "🛡️ Centinela 24/7 activo en segundo plano. Esperando nuevas fotos de la cámara o archivos extraídos de la Carpeta Bloqueada...",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -471,62 +474,86 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
 }
 
 @Composable
-fun SessionControlCard(
-    isActive: Boolean,
-    onStartClick: () -> Unit,
-    onStopClick: () -> Unit
+fun SentinelStatusCard(
+    isRefreshing: Boolean,
+    onForceScan: () -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isActive) Color(0xFF1E3A8A) else MaterialTheme.colorScheme.surfaceVariant
+            containerColor = Color(0xFF0F172A)
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Box(
                     modifier = Modifier
-                        .size(12.dp)
+                        .size(10.dp)
                         .clip(CircleShape)
-                        .background(if (isActive) Color(0xFF22C55E) else Color.Gray)
+                        .background(Color(0xFF22C55E))
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (isActive) "CENTINELA ACTIVO (FOTOS + VIDEOS)" else "CENTINELA EN ESPERA",
+                    text = "CENTINELA 24/7 ACTIVO Y VIGILANDO",
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isActive) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White,
+                    letterSpacing = 0.5.sp
                 )
+                Spacer(modifier = Modifier.weight(1f))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF1E293B))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = "PERMANENTE",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF38BDF8)
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = if (isActive)
-                    "Monitoreando la galería pública. Desbloquea la Carpeta Bloqueada en Google Fotos y extrae los archivos deseados. Se enviarán individualmente a Telegram al instante."
-                else
-                    "Pulsa 'Iniciar Extracción' antes de sacar archivos en Google Fotos. El filtro temporal garantiza que SOLO audite lo que extraigas en esta sesión.",
+                text = "Monitoreo continuo activo en segundo plano. Toda foto tomada por la cámara o extraída de la Carpeta Bloqueada se resguarda y se envía a Telegram de forma automática.",
                 fontSize = 13.sp,
-                color = if (isActive) Color(0xFFE2E8F0) else MaterialTheme.colorScheme.onSurfaceVariant
+                color = Color(0xFFCBD5E1),
+                lineHeight = 18.sp
             )
             Spacer(modifier = Modifier.height(14.dp))
 
-            if (isActive) {
-                Button(
-                    onClick = onStopClick,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("🛑 Finalizar y Cerrar Sesión", fontWeight = FontWeight.Bold)
-                }
-            } else {
-                Button(
-                    onClick = onStartClick,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("🚀 Iniciar Sesión de Extracción", fontWeight = FontWeight.Bold)
+            Button(
+                onClick = onForceScan,
+                enabled = !isRefreshing,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF2563EB),
+                    disabledContainerColor = Color(0xFF1E3A8A)
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                if (isRefreshing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Escaneando almacenamiento...", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Escanear y Sincronizar Ahora", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -593,7 +620,7 @@ fun PhotoChecklistCard(
     onDismissClick: () -> Unit
 ) {
     Card(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (photo.isReProtected) Color(0xFFF0FDF4) else MaterialTheme.colorScheme.surface
@@ -602,210 +629,223 @@ fun PhotoChecklistCard(
             .fillMaxWidth()
             .clickable { onOpenInGallery() }
     ) {
-        Row(
+        Column(
             modifier = Modifier
-                .padding(12.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxWidth()
+                .padding(14.dp)
         ) {
-            // Miniatura con Coil o Icono según tipo
-            Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.LightGray),
-                contentAlignment = Alignment.Center
+            // Fila 1: Miniatura + Nombre/Detalles + Botones de Acción compactos
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(photo.uriString)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = photo.displayName,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
+                // Miniatura
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFFE2E8F0)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(photo.uriString)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = photo.displayName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
 
-                if (photo.isVideo) {
-                    Box(
+                    if (photo.isVideo) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.6f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Videocam,
+                                contentDescription = "Video",
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                // Nombre y detalles del archivo
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = if (photo.isVideo) Icons.Default.Videocam else Icons.Default.Image,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = if (photo.isVideo) Color(0xFF7C3AED) else MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = photo.displayName,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "${photo.fileSizeBytes / 1024} KB • ${photo.mimeType}",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Botones de acción alineados a la derecha
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onOpenInGallery,
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.6f)),
-                        contentAlignment = Alignment.Center
+                            .background(MaterialTheme.colorScheme.primaryContainer)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Videocam,
-                            contentDescription = "Video",
-                            tint = Color.White,
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = "Abrir en Fotos",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onDismissClick,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFFFEBEE))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Descartar",
+                            tint = Color(0xFFC62828),
                             modifier = Modifier.size(16.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = if (photo.isVideo) Icons.Default.Videocam else Icons.Default.Image,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = if (photo.isVideo) Color(0xFF7C3AED) else MaterialTheme.colorScheme.primary
+            // Fila 2 (Ancho Completo): Badges organizados horizontalmente sin truncarse
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (photo.isReProtected) {
+                    BadgePill(
+                        text = "🔒 Re-bloqueado",
+                        bgColor = Color(0xFFDCFCE7),
+                        textColor = Color(0xFF15803D)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = photo.displayName,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                } else {
+                    BadgePill(
+                        text = "🔴 Expuesto",
+                        bgColor = Color(0xFFFEE2E2),
+                        textColor = Color(0xFFB91C1C)
                     )
                 }
 
-                Text(
-                    text = "${photo.fileSizeBytes / 1024} KB • ${photo.mimeType}",
-                    fontSize = 11.sp,
-                    color = Color.Gray
-                )
-                Spacer(modifier = Modifier.height(6.dp))
+                if (photo.localStagingPath != null) {
+                    BadgePill(
+                        text = "🛡️ En Bóveda",
+                        bgColor = Color(0xFFEDE9FE),
+                        textColor = Color(0xFF6D28D9)
+                    )
+                }
 
-                // Badges
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (photo.isReProtected) {
+                when (photo.backupStatus) {
+                    BackupStatus.BACKED_UP -> {
                         BadgePill(
-                            text = "🔒 Re-bloqueado",
-                            bgColor = Color(0xFFDCFCE7),
-                            textColor = Color(0xFF15803D)
+                            text = "✈️ Enviado",
+                            bgColor = Color(0xFFDBEAFE),
+                            textColor = Color(0xFF1D4ED8)
                         )
-                    } else {
+                    }
+                    BackupStatus.BACKING_UP -> {
+                        val statusText = if (!photo.lastError.isNullOrBlank() && photo.lastError.startsWith("Enviando")) {
+                            "⏳ ${photo.lastError}"
+                        } else {
+                            "⏳ Enviando..."
+                        }
                         BadgePill(
-                            text = "🔴 Expuesto",
+                            text = statusText,
+                            bgColor = Color(0xFFFEF3C7),
+                            textColor = Color(0xFFB45309)
+                        )
+                    }
+                    BackupStatus.FAILED -> {
+                        BadgePill(
+                            text = "⚠️ Falló (Reintentar)",
                             bgColor = Color(0xFFFEE2E2),
-                            textColor = Color(0xFFB91C1C)
+                            textColor = Color(0xFFB91C1C),
+                            onClick = onRetryClick
                         )
                     }
-
-                    if (photo.localStagingPath != null) {
-                        BadgePill(
-                            text = "🛡️ En Bóveda",
-                            bgColor = Color(0xFFEDE9FE),
-                            textColor = Color(0xFF6D28D9)
-                        )
-                    }
-
-                    when (photo.backupStatus) {
-                        BackupStatus.BACKED_UP -> {
+                    BackupStatus.PENDING -> {
+                        val isWaitingWifi = photo.lastError?.contains("esperando Wi-Fi", ignoreCase = true) == true
+                        if (isWaitingWifi) {
+                            val sizeMb = (photo.fileSizeBytes / (1024 * 1024)).coerceAtLeast(1)
                             BadgePill(
-                                text = "✈️ Enviado",
-                                bgColor = Color(0xFFDBEAFE),
+                                text = "📶 Espera Wi-Fi ($sizeMb MB)",
+                                bgColor = Color(0xFFEFF6FF),
                                 textColor = Color(0xFF1D4ED8)
                             )
-                        }
-                        BackupStatus.BACKING_UP -> {
-                            val statusText = if (!photo.lastError.isNullOrBlank() && photo.lastError.startsWith("Enviando")) {
-                                "⏳ ${photo.lastError}"
-                            } else {
-                                "⏳ Enviando..."
-                            }
+                        } else {
                             BadgePill(
-                                text = statusText,
-                                bgColor = Color(0xFFFEF3C7),
-                                textColor = Color(0xFFB45309)
+                                text = "⏳ Pendiente",
+                                bgColor = Color(0xFFF3F4F6),
+                                textColor = Color(0xFF4B5563)
                             )
-                        }
-
-                        BackupStatus.FAILED -> {
-                            BadgePill(
-                                text = "⚠️ Falló (Reintentar)",
-                                bgColor = Color(0xFFFEE2E2),
-                                textColor = Color(0xFFB91C1C),
-                                onClick = onRetryClick
-                            )
-                            if (!photo.lastError.isNullOrBlank()) {
-                                val friendlyError = when {
-                                    photo.lastError.contains("blocked by the user", ignoreCase = true) ->
-                                        "🚫 Bot bloqueado en Telegram. Busca tu bot y pulsa /start para desbloquearlo."
-                                    photo.lastError.contains("chat not found", ignoreCase = true) ->
-                                        "❓ Chat o canal no encontrado. Verifica el ID o reinicia el bot."
-                                    else -> photo.lastError
-                                }
-                                Text(
-                                    text = friendlyError,
-                                    fontSize = 11.sp,
-                                    color = Color(0xFFB91C1C),
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                )
-                            }
-                        }
-                        BackupStatus.PENDING -> {
-                            val isWaitingWifi = photo.lastError?.contains("esperando Wi-Fi", ignoreCase = true) == true
-                            if (isWaitingWifi) {
-                                val sizeMb = (photo.fileSizeBytes / (1024 * 1024)).coerceAtLeast(1)
-                                BadgePill(
-                                    text = "📶 Espera Wi-Fi ($sizeMb MB)",
-                                    bgColor = Color(0xFFEFF6FF),
-                                    textColor = Color(0xFF1D4ED8)
-                                )
-                                Text(
-                                    text = "En pausa para ahorrar datos móviles. Se subirá con Wi-Fi.",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF2563EB),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                )
-                            } else {
-                                BadgePill(
-                                    text = "⏳ Pendiente",
-                                    bgColor = Color(0xFFF3F4F6),
-                                    textColor = Color(0xFF4B5563)
-                                )
-                            }
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Botón directo para abrir en Google Fotos
-                IconButton(
-                    onClick = onOpenInGallery,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = "Abrir en Fotos",
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(18.dp)
-                    )
+            // Avisos explicativos si hay error o espera de Wi-Fi
+            if (photo.backupStatus == BackupStatus.FAILED && !photo.lastError.isNullOrBlank()) {
+                val friendlyError = when {
+                    photo.lastError.contains("blocked by the user", ignoreCase = true) ->
+                        "🚫 Bot bloqueado en Telegram. Busca tu bot y pulsa /start para desbloquearlo."
+                    photo.lastError.contains("chat not found", ignoreCase = true) ->
+                        "❓ Chat o canal no encontrado. Verifica el ID o reinicia el bot."
+                    else -> photo.lastError
                 }
-
-                Spacer(modifier = Modifier.width(6.dp))
-
-                // Botón para descartar / eliminar de la cola si se traba
-                IconButton(
-                    onClick = onDismissClick,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFFEE2E2))
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Descartar / Eliminar",
-                        tint = Color(0xFFDC2626),
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                Text(
+                    text = friendlyError,
+                    fontSize = 11.sp,
+                    color = Color(0xFFB91C1C),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            } else if (photo.backupStatus == BackupStatus.PENDING && photo.lastError?.contains("esperando Wi-Fi", ignoreCase = true) == true) {
+                Text(
+                    text = "En pausa para ahorrar datos móviles. Se subirá automáticamente al conectar Wi-Fi.",
+                    fontSize = 11.sp,
+                    color = Color(0xFF2563EB),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
     }
@@ -822,14 +862,16 @@ fun BadgePill(
         .clip(RoundedCornerShape(6.dp))
         .background(bgColor)
         .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-        .padding(horizontal = 6.dp, vertical = 2.dp)
+        .padding(horizontal = 8.dp, vertical = 3.dp)
 
     Box(modifier = modifier) {
         Text(
             text = text,
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
-            color = textColor
+            color = textColor,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }

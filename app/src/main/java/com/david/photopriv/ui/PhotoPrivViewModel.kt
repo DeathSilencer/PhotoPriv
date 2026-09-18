@@ -55,20 +55,21 @@ class PhotoPrivViewModel(application: Application) : AndroidViewModel(applicatio
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val sessionPhotos: StateFlow<List<TrackedPhoto>> = activeSession.flatMapLatest { session ->
-        val s = session ?: latestSession.value
-        if (s != null) {
-            repository.getPhotosForSession(s.sessionId)
-        } else {
-            flowOf(emptyList())
+    val sessionPhotos: StateFlow<List<TrackedPhoto>> = repository.allPhotosFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    init {
+        ensurePermanentSessionActive()
+    }
+
+    fun ensurePermanentSessionActive() {
+        viewModelScope.launch {
+            repository.ensurePermanentSessionActive()
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
 
     fun startExtractionSession() {
-        viewModelScope.launch {
-            repository.startExtractionSession()
-        }
+        ensurePermanentSessionActive()
     }
 
     fun stopExtractionSession() {
@@ -80,12 +81,14 @@ class PhotoPrivViewModel(application: Application) : AndroidViewModel(applicatio
     fun refreshScan() {
         viewModelScope.launch {
             _isRefreshing.value = true
-            val session = activeSession.value ?: latestSession.value
-            if (session != null) {
+            try {
+                val session = repository.ensurePermanentSessionActive()
                 repository.scanAndProcessNewPhotos(session.sessionId, session.startTime)
                 repository.checkProtectionStatus(session.sessionId)
+                repository.dispatchImmediateUpload(session.sessionId)
+            } finally {
+                _isRefreshing.value = false
             }
-            _isRefreshing.value = false
         }
     }
 

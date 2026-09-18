@@ -59,11 +59,20 @@ interface PhotoDao {
     @Query("SELECT * FROM tracked_photos WHERE sessionId = :sessionId ORDER BY dateAdded DESC")
     fun getPhotosForSession(sessionId: Long): Flow<List<TrackedPhoto>>
 
+    @Query("SELECT * FROM tracked_photos ORDER BY dateAdded DESC")
+    fun getAllPhotosFlow(): Flow<List<TrackedPhoto>>
+
     @Query("SELECT * FROM tracked_photos WHERE sessionId = :sessionId")
     fun getPhotosForSessionSync(sessionId: Long): List<TrackedPhoto>
 
+    @Query("SELECT * FROM tracked_photos")
+    fun getAllPhotosSync(): List<TrackedPhoto>
+
     @Query("SELECT mediaStoreId FROM tracked_photos WHERE sessionId = :sessionId")
     fun getTrackedMediaIdsForSession(sessionId: Long): List<Long>
+
+    @Query("SELECT mediaStoreId FROM tracked_photos")
+    fun getAllTrackedMediaIds(): List<Long>
 
     @Query("SELECT * FROM tracked_photos WHERE mediaStoreId = :mediaStoreId LIMIT 1")
     fun getPhotoById(mediaStoreId: Long): TrackedPhoto?
@@ -77,8 +86,14 @@ interface PhotoDao {
     @Query("SELECT * FROM tracked_photos WHERE sessionId = :sessionId AND backupStatus = 'PENDING' ORDER BY isVideo ASC, dateAdded ASC")
     fun getPendingBackupPhotos(sessionId: Long): List<TrackedPhoto>
 
+    @Query("SELECT * FROM tracked_photos WHERE backupStatus = 'PENDING' ORDER BY isVideo ASC, dateAdded ASC")
+    fun getAllPendingBackupPhotos(): List<TrackedPhoto>
+
     @Query("SELECT * FROM tracked_photos WHERE sessionId = :sessionId AND backupStatus IN ('PENDING', 'FAILED') ORDER BY isVideo ASC, dateAdded ASC")
     fun getPendingOrFailedPhotos(sessionId: Long): List<TrackedPhoto>
+
+    @Query("SELECT * FROM tracked_photos WHERE backupStatus IN ('PENDING', 'FAILED') ORDER BY isVideo ASC, dateAdded ASC")
+    fun getAllPendingOrFailedPhotos(): List<TrackedPhoto>
 
     @Query("SELECT COUNT(*) FROM tracked_photos WHERE sessionId = :sessionId")
     fun getTotalCount(sessionId: Long): Flow<Int>

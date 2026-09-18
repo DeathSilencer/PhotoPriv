@@ -51,6 +51,7 @@ class PhotoRepository(
 
     val activeSessionFlow: Flow<ExtractionSession?> = photoDao.getActiveSessionFlow()
     val latestSessionFlow: Flow<ExtractionSession?> = photoDao.getLatestSessionFlow()
+    val allPhotosFlow: Flow<List<TrackedPhoto>> = photoDao.getAllPhotosFlow()
 
     fun getPhotosForSession(sessionId: Long): Flow<List<TrackedPhoto>> {
         return photoDao.getPhotosForSession(sessionId)
@@ -60,37 +61,50 @@ class PhotoRepository(
         photoDao.getActiveSession()
     }
 
-    suspend fun startExtractionSession(): Long = withContext(Dispatchers.IO) {
-        val nowSeconds = System.currentTimeMillis() / 1000
-        photoDao.closeAllActiveSessions(nowSeconds)
+    /**
+     * Garantiza que exista una sesión permanente 24/7 y que el Centinela y guardianes
+     * de segundo plano estén activos de forma indefinida sin requerir interacción manual.
+     */
+    suspend fun ensurePermanentSessionActive(): ExtractionSession = withContext(Dispatchers.IO) {
+        val existing = photoDao.getActiveSession()
+        val targetSession = if (existing != null) {
+            existing
+        } else {
+            val nowSeconds = System.currentTimeMillis() / 1000
+            val newSession = ExtractionSession(
+                startTime = nowSeconds,
+                isActive = true
+            )
+            val id = photoDao.insertSession(newSession)
+            newSession.copy(sessionId = id)
+        }
 
-        val newSession = ExtractionSession(
-            startTime = nowSeconds,
-            isActive = true
-        )
-        val sessionId = photoDao.insertSession(newSession)
-
-        // Limpiar cualquier estado inconsistente previo
-        photoDao.resetIncompleteUploads(sessionId)
-
-        // Iniciar servicio foreground centinela
+        // Iniciar / mantener vivo el servicio Centinela en primer plano
         val serviceIntent = Intent(context, ExtractionSentinelService::class.java).apply {
             action = ExtractionSentinelService.ACTION_START
-            putExtra(ExtractionSentinelService.EXTRA_SESSION_ID, sessionId)
-            putExtra(ExtractionSentinelService.EXTRA_START_TIME, nowSeconds)
+            putExtra(ExtractionSentinelService.EXTRA_SESSION_ID, targetSession.sessionId)
+            putExtra(ExtractionSentinelService.EXTRA_START_TIME, targetSession.startTime)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent)
-        } else {
-            context.startService(serviceIntent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error iniciando servicio centinela: ${e.message}")
         }
 
         // Armar guardianes de ultra-persistencia 24/7 (Doze Mode & MediaStore)
         SentinelKeepAliveReceiver.scheduleKeepAlive(context)
         PhotoBackupWorker.scheduleMediaWatcher(context)
 
-        Log.d(TAG, "Sesión de extracción $sessionId iniciada a las $nowSeconds con guardianes 24/7")
-        sessionId
+        Log.d(TAG, "Centinela permanente 24/7 asegurado para la sesión ${targetSession.sessionId}")
+        targetSession
+    }
+
+    suspend fun startExtractionSession(): Long = withContext(Dispatchers.IO) {
+        ensurePermanentSessionActive().sessionId
     }
 
     suspend fun stopExtractionSession() = withContext(Dispatchers.IO) {
@@ -119,17 +133,21 @@ class PhotoRepository(
 
     /**
      * Escanea el almacenamiento público buscando fotos recién añadidas desde el inicio de la sesión.
-     * Protegido contra llamadas simultáneas mediante Mutex.
+     * Protegido contra llamadas simultáneas mediante Mutex con espera inteligente.
      * Inmediatamente aísla los archivos en la bóveda secreta para que el usuario pueda re-bloquearlos
      * en Google Fotos sin esperar a que termine la subida.
      */
     suspend fun scanAndProcessNewPhotos(sessionId: Long, sessionStartTime: Long): List<TrackedPhoto> =
         withContext(Dispatchers.IO) {
-            if (!scanMutex.tryLock()) {
+            val acquired = kotlinx.coroutines.withTimeoutOrNull(2500) {
+                scanMutex.lock()
+                true
+            } ?: false
+            if (!acquired) {
                 return@withContext emptyList()
             }
             try {
-                val existingIds = photoDao.getTrackedMediaIdsForSession(sessionId).toSet()
+                val existingIds = photoDao.getAllTrackedMediaIds().toSet()
                 val newPhotos = MediaStoreScanner.scanForExtractedPhotos(
                     context,
                     sessionStartTime,
@@ -215,12 +233,12 @@ class PhotoRepository(
             val isWifi = NetworkMonitor.isWifiOrUnmetered(context)
             val heavyThresholdBytes = appPrefs.heavyFileThresholdMb * 1024 * 1024L
 
-            // Consultar únicamente archivos que están en estado PENDING (fotos primero, videos después)
-            val pendingList = photoDao.getPendingBackupPhotos(sessionId)
+            // Consultar archivos que están en estado PENDING (fotos primero, videos después)
+            val pendingList = photoDao.getPendingBackupPhotos(sessionId).ifEmpty { photoDao.getAllPendingBackupPhotos() }
             if (pendingList.isEmpty()) {
                 // Si la pasada terminó y no hay pendientes, checar si hay fallidos para darles un ciclo de reintento
                 if (queueCycle < maxQueueCycles) {
-                    val failedPhotos = photoDao.getPendingOrFailedPhotos(sessionId)
+                    val failedPhotos = photoDao.getPendingOrFailedPhotos(sessionId).ifEmpty { photoDao.getAllPendingOrFailedPhotos() }
                         .filter { it.backupStatus == BackupStatus.FAILED }
                     if (failedPhotos.isNotEmpty()) {
                         queueCycle++
