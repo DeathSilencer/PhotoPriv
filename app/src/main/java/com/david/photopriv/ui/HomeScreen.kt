@@ -82,13 +82,26 @@ fun HomeScreen(viewModel: PhotoPrivViewModel) {
     val stats = viewModel.computeStats(sessionPhotos)
     val isSessionActive = activeSession != null
 
-    // Filtro de Sigilo Total:
-    // Los archivos que ya están enviados a Telegram (BACKED_UP) Y que ya regresaron a la Carpeta Bloqueada (isReProtected)
-    // se eliminan automáticamente del panel para no dejar historial ni miniaturas en pantalla.
-    // Solo permanecen visibles los archivos pendientes de subida, los que hayan fallado (para reintentar)
-    // o los que sigan expuestos en la galería pública sin haber regresado a la Carpeta Privada.
+    // Filtro de Sigilo Total con Regla de 40 Minutos:
+    // 1. Archivos pendientes o fallidos -> Siempre visibles.
+    // 2. Archivos respaldados en Telegram (BACKED_UP):
+    //    a) Si ya regresaron a la Carpeta Bloqueada (isReProtected) -> Desaparecen de inmediato.
+    //    b) Si aún no regresan a la Carpeta Bloqueada -> Permanecen visibles en pantalla para que el usuario
+    //       sepa que están expuestos, y se purgan automáticamente tras 40 minutos de haberse respaldado.
     val visiblePhotos = remember(sessionPhotos) {
-        sessionPhotos.filterNot { it.backupStatus == BackupStatus.BACKED_UP && it.isReProtected }
+        val now = System.currentTimeMillis()
+        val FORTY_MINUTES_MS = 40 * 60 * 1000L
+
+        sessionPhotos.filterNot { photo ->
+            if (photo.backupStatus != BackupStatus.BACKED_UP) {
+                false
+            } else if (photo.isReProtected) {
+                true
+            } else {
+                val backupTime = photo.backupTimestamp
+                backupTime != null && (now - backupTime) >= FORTY_MINUTES_MS
+            }
+        }
     }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
