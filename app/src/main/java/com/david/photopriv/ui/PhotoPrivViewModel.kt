@@ -85,6 +85,8 @@ class PhotoPrivViewModel(application: Application) : AndroidViewModel(applicatio
                 val session = repository.ensurePermanentSessionActive()
                 repository.scanAndProcessNewPhotos(session.sessionId, session.startTime)
                 repository.checkProtectionStatus(session.sessionId)
+                repository.pruneExpiredVaultFiles()
+                com.david.photopriv.util.CacheCleanerHelper.cleanAll(app, app.database.photoDao())
                 repository.dispatchImmediateUpload(session.sessionId)
             } finally {
                 _isRefreshing.value = false

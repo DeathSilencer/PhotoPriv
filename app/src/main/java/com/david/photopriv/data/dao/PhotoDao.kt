@@ -56,6 +56,12 @@ interface PhotoDao {
     @Query("UPDATE tracked_photos SET localStagingPath = :path WHERE mediaStoreId = :mediaStoreId")
     fun updateLocalStagingPath(mediaStoreId: Long, path: String?): Int
 
+    @Query("SELECT * FROM tracked_photos WHERE localStagingPath IS NOT NULL")
+    fun getPhotosWithStagedFiles(): List<TrackedPhoto>
+
+    @Query("SELECT localStagingPath FROM tracked_photos WHERE localStagingPath IS NOT NULL")
+    fun getAllStagedPaths(): List<String>
+
     @Query("SELECT * FROM tracked_photos WHERE sessionId = :sessionId ORDER BY dateAdded DESC")
     fun getPhotosForSession(sessionId: Long): Flow<List<TrackedPhoto>>
 

@@ -31,6 +31,7 @@ object TelegramSenderHelper {
 
     private const val TAG = "TelegramSenderHelper"
     private const val MAX_TELEGRAM_FILE_SIZE = 45 * 1024 * 1024L // 45 MB para margen de seguridad
+    private const val MIN_COMPRESS_THRESHOLD_BYTES = 500 * 1024L // 500 KB: fotos por debajo ya son ligeras y no se comprimen
 
     private val httpClient by lazy {
         OkHttpClient.Builder()
@@ -219,8 +220,13 @@ object TelegramSenderHelper {
             val originalSizeBytes = photo.fileSizeBytes.takeIf { it > 0 } ?: (stagedFile?.length() ?: 0L)
             val originalSizeStr = formatSize(originalSizeBytes)
 
-            // 1. Si Ahorro de Datos está activo O el archivo es WebP/HEIC
-            if (dataSaverMode || isWebpOrHeic) {
+            // 1. Evaluación inteligente de compresión:
+            // - Archivos WebP o HEIC: Se procesan siempre para convertir a JPEG (Telegram no maneja bien WebP como documento/foto estándar).
+            // - Formatos estándar (JPG, PNG): SOLO se comprimen si 'dataSaverMode' está activo Y el archivo pesa MÁS de 500 KB.
+            //   Archivos <= 500 KB ya son sumamente ligeros y comprimirlos suele aumentar su peso por re-cuantización.
+            val shouldAttemptCompression = isWebpOrHeic || (dataSaverMode && originalSizeBytes > MIN_COMPRESS_THRESHOLD_BYTES)
+
+            if (shouldAttemptCompression) {
                 val maxDim = if (dataSaverMode) 1920 else 4096
                 val quality = if (dataSaverMode) 82 else 95
 
@@ -230,7 +236,12 @@ object TelegramSenderHelper {
                     MediaCompressor.compressImage(context, uri, maxDimension = maxDim, quality = quality)
                 }
 
-                if (compressResult != null && compressResult.bytes.isNotEmpty()) {
+                // Salvaguarda matemática estricta: sólo usar el archivo comprimido si es estrictamente
+                // más pequeño que el original (o si es WebP/HEIC que obligatoriamente requiere conversión a JPEG)
+                val isStrictlySmaller = compressResult != null && compressResult.bytes.isNotEmpty() &&
+                        (originalSizeBytes <= 0L || compressResult.bytes.size < originalSizeBytes)
+
+                if (compressResult != null && compressResult.bytes.isNotEmpty() && (isWebpOrHeic || isStrictlySmaller)) {
                     val compSizeStr = formatSize(compressResult.bytes.size.toLong())
                     val reductionPct = if (originalSizeBytes > 0 && originalSizeBytes > compressResult.bytes.size) {
                         ((originalSizeBytes - compressResult.bytes.size).toDouble() / originalSizeBytes * 100).toInt()
@@ -249,10 +260,16 @@ object TelegramSenderHelper {
 
                     val reqBody = compressResult.bytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
                     return@withContext executeTelegramSend(url, config.chatId, captionText, targetFileName, reqBody)
+                } else {
+                    Log.d(TAG, "Compresión descartada para ${photo.displayName} (Original: $originalSizeBytes, Comprimido: ${compressResult?.bytes?.size}). Se enviará original sin alterar.")
                 }
             }
 
             // 2. Foto original sin compresión (JPG/PNG directo <= 45MB)
+            // Se utiliza cuando:
+            // a) Pesa <= 500 KB (ya es ligera).
+            // b) El modo ahorro está desactivado.
+            // c) La compresión produjo un archivo mayor o igual al original (se preserva el original sin pérdida).
             if (effectiveSize <= MAX_TELEGRAM_FILE_SIZE) {
                 val mimeType = photo.mimeType.ifBlank { "image/jpeg" }
                 val requestBody = if (stagedFile != null && stagedFile.exists()) {
@@ -275,15 +292,21 @@ object TelegramSenderHelper {
                     }
                 }
 
+                val sizeNote = if (originalSizeBytes > 0 && originalSizeBytes <= MIN_COMPRESS_THRESHOLD_BYTES) {
+                    " (Ligero ≤ 500 KB / Sin alterar)"
+                } else {
+                    " (Original sin compresión)"
+                }
+
                 val captionText = """
                     🛡️ *PhotoPriv - Foto Segura*
                     $deviceHeader
-                    📷 Foto: `${targetFileName}`
-                    📦 Tamaño Original: $originalSizeStr (Sin compresión)$captureTimeStr
+                    📷 Foto: `${photo.displayName}`
+                    📦 Tamaño: $originalSizeStr$sizeNote$captureTimeStr
                     ⏱️ Envío: $timestamp
                 """.trimIndent()
 
-                return@withContext executeTelegramSend(url, config.chatId, captionText, targetFileName, requestBody)
+                return@withContext executeTelegramSend(url, config.chatId, captionText, photo.displayName, requestBody)
             } else {
                 return@withContext SendResult.Error("La foto ${photo.displayName} excede el límite de 45MB.")
             }

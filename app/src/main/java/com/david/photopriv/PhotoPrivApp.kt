@@ -34,6 +34,10 @@ class PhotoPrivApp : Application() {
         // Verificar si existe una sesión activa y garantizar que el centinela y guardianes estén vivos
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                // Auto-limpieza de caché y purga de archivos huérfanos/expirados de bóveda al arranque
+                com.david.photopriv.util.CacheCleanerHelper.cleanAll(this@PhotoPrivApp, database.photoDao())
+                repository.pruneExpiredVaultFiles()
+
                 val active = database.photoDao().getActiveSession()
                 if (active != null) {
                     val serviceIntent = android.content.Intent(this@PhotoPrivApp, com.david.photopriv.service.ExtractionSentinelService::class.java).apply {

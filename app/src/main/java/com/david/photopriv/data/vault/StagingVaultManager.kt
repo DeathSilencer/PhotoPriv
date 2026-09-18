@@ -25,16 +25,25 @@ object StagingVaultManager {
         val dir = File(context.noBackupFilesDir, VAULT_DIR_NAME)
         if (!dir.exists()) {
             dir.mkdirs()
-            try {
-                File(dir, ".nomedia").createNewFile()
-            } catch (ignored: Exception) {}
         }
+        // Restricción POSIX estricta: sólo el UID de la app puede leer, escribir y acceder
+        try {
+            dir.setReadable(true, true)
+            dir.setWritable(true, true)
+            dir.setExecutable(true, true)
+            val nomedia = File(dir, ".nomedia")
+            if (!nomedia.exists()) {
+                nomedia.createNewFile()
+                nomedia.setReadable(true, true)
+            }
+        } catch (ignored: Exception) {}
         return dir
     }
 
     /**
      * Copia de inmediato un archivo multimedia público a la bóveda secreta interna.
      * Operación ultrarrápida (milisegundos) para que el usuario pueda re-bloquear sin demora.
+     * El archivo resultante queda blindado en almacenamiento privado con permisos exclusivos.
      */
     fun stageMedia(context: Context, mediaStoreId: Long, displayName: String, uri: Uri): File? {
         val vaultDir = getVaultDir(context)
@@ -52,7 +61,10 @@ object StagingVaultManager {
                 }
 
                 if (targetFile.exists() && targetFile.length() > 0L) {
-                    Log.d(TAG, "Archivo aislado en bóveda secreta: ${targetFile.name} (${targetFile.length() / 1024} KB)")
+                    // Blindaje POSIX: sólo el UID de PhotoPriv puede leer este archivo
+                    targetFile.setReadable(true, true)
+                    targetFile.setWritable(true, true)
+                    Log.d(TAG, "Archivo blindado en bóveda secreta: ${targetFile.name} (${targetFile.length() / 1024} KB)")
                     return targetFile
                 }
             } catch (e: Exception) {

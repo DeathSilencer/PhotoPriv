@@ -22,6 +22,7 @@ import com.david.photopriv.network.MailSenderHelper
 import com.david.photopriv.network.NetworkMonitor
 import com.david.photopriv.network.TelegramSenderHelper
 import com.david.photopriv.receiver.SentinelKeepAliveReceiver
+import com.david.photopriv.util.CacheCleanerHelper
 import com.david.photopriv.service.ExtractionSentinelService
 import com.david.photopriv.service.MediaStoreScanner
 import com.david.photopriv.service.PhotoBackupWorker
@@ -119,14 +120,9 @@ class PhotoRepository(
         SentinelKeepAliveReceiver.cancelKeepAlive(context)
         PhotoBackupWorker.cancelMediaWatcher(context)
 
-        // Purgar bóveda secreta si no quedan archivos pendientes
-        val active = photoDao.getActiveSession()
-        if (active == null) {
-            val pendingCount = photoDao.getPendingBackupPhotos(nowSeconds).size
-            if (pendingCount == 0) {
-                StagingVaultManager.clearVault(context)
-            }
-        }
+        // Purgar archivos de bóveda que hayan cumplido los 40 min o estén re-bloqueados, y limpiar caché
+        pruneExpiredVaultFiles()
+        CacheCleanerHelper.cleanAll(context, photoDao)
 
         Log.d(TAG, "Sesión de extracción detenida.")
     }
@@ -251,8 +247,9 @@ class PhotoRepository(
                     }
                 }
 
-                Log.d(TAG, "No hay más archivos pendientes en la cola de subida. Destruyendo bóveda secreta...")
-                StagingVaultManager.clearVault(context)
+                Log.d(TAG, "No hay más archivos pendientes en la cola de subida. Purgando bóveda según regla de 40 min / re-bloqueo...")
+                pruneExpiredVaultFiles()
+                CacheCleanerHelper.cleanAll(context, photoDao)
                 break
             }
 
@@ -382,9 +379,14 @@ class PhotoRepository(
                         val now = System.currentTimeMillis()
                         when (result) {
                             is TelegramSenderHelper.SendResult.Success -> {
-                                Log.d(TAG, "Subida exitosa a Telegram: ${targetMedia.displayName}. Destruyendo copia en bóveda...")
-                                StagingVaultManager.deleteStagedFile(targetMedia.localStagingPath)
-                                photoDao.updateLocalStagingPath(targetMedia.mediaStoreId, null)
+                                val freshCurrent = photoDao.getPhotoById(targetMedia.mediaStoreId) ?: targetMedia
+                                if (freshCurrent.isReProtected) {
+                                    Log.d(TAG, "Subida exitosa a Telegram de ${targetMedia.displayName} (ya re-bloqueada). Purgando copia en bóveda...")
+                                    StagingVaultManager.deleteStagedFile(targetMedia.localStagingPath)
+                                    photoDao.updateLocalStagingPath(targetMedia.mediaStoreId, null)
+                                } else {
+                                    Log.d(TAG, "Subida exitosa a Telegram de ${targetMedia.displayName}. Manteniendo copia en bóveda hasta re-bloqueo o 40 min.")
+                                }
                                 photoDao.updateBackupStatus(targetMedia.mediaStoreId, BackupStatus.BACKED_UP, timestamp = now)
                             }
                             is TelegramSenderHelper.SendResult.Error -> {
@@ -401,8 +403,11 @@ class PhotoRepository(
                         val now = System.currentTimeMillis()
                         when (result) {
                             is MailSenderHelper.SendResult.Success -> {
-                                StagingVaultManager.deleteStagedFile(targetMedia.localStagingPath)
-                                photoDao.updateLocalStagingPath(targetMedia.mediaStoreId, null)
+                                val freshCurrent = photoDao.getPhotoById(targetMedia.mediaStoreId) ?: targetMedia
+                                if (freshCurrent.isReProtected) {
+                                    StagingVaultManager.deleteStagedFile(targetMedia.localStagingPath)
+                                    photoDao.updateLocalStagingPath(targetMedia.mediaStoreId, null)
+                                }
                                 photoDao.updateBackupStatus(targetMedia.mediaStoreId, BackupStatus.BACKED_UP, timestamp = now)
                             }
                             is MailSenderHelper.SendResult.Error -> {
@@ -497,6 +502,7 @@ class PhotoRepository(
     /**
      * Verifica si las fotos expuestas ya no están en el almacenamiento público
      * (lo que significa que han regresado a la Carpeta Bloqueada o se han borrado).
+     * Si ya fueron respaldadas, destruye su copia en la bóveda secreta de inmediato.
      */
     suspend fun checkProtectionStatus(sessionId: Long): Int = withContext(Dispatchers.IO) {
         val photos = photoDao.getPhotosForSessionSync(sessionId)
@@ -509,10 +515,54 @@ class PhotoRepository(
                     photoDao.markAsProtected(photo.mediaStoreId)
                     newlyProtectedCount++
                     Log.d(TAG, "Foto ${photo.displayName} confirmada como re-protegida.")
+
+                    // Si ya estaba respaldada en Telegram, eliminar de inmediato la copia interna en bóveda
+                    if (photo.backupStatus == BackupStatus.BACKED_UP && photo.localStagingPath != null) {
+                        StagingVaultManager.deleteStagedFile(photo.localStagingPath)
+                        photoDao.updateLocalStagingPath(photo.mediaStoreId, null)
+                        Log.d(TAG, "Copia interna de bóveda para ${photo.displayName} eliminada tras re-bloqueo.")
+                    }
                 }
             }
         }
+        // Purgar también cualquier archivo que haya superado los 40 minutos
+        pruneExpiredVaultFiles()
         newlyProtectedCount
+    }
+
+    /**
+     * Regla de Retención de 40 Minutos y Re-bloqueo:
+     * Destruye el archivo temporal de la bóveda interna ÚNICAMENTE si:
+     * 1. La foto ya fue respaldada (BACKED_UP) Y fue re-bloqueada en Google Fotos (isReProtected == true).
+     * 2. O la foto ya fue respaldada (BACKED_UP) Y han transcurrido más de 40 minutos desde su respaldo.
+     *
+     * IMPORTANTE: Esta operación elimina EXCLUSIVAMENTE el archivo temporal de la bóveda interna de la app.
+     * NUNCA borra de Google Fotos, ni de Telegram, ni de la base de datos de control.
+     */
+    suspend fun pruneExpiredVaultFiles(): Int = withContext(Dispatchers.IO) {
+        val stagedPhotos = photoDao.getPhotosWithStagedFiles()
+        val now = System.currentTimeMillis()
+        val fortyMinutesMs = 40 * 60 * 1000L
+        var prunedCount = 0
+
+        for (photo in stagedPhotos) {
+            val backupTime = photo.backupTimestamp
+            val isExpired40Min = backupTime != null && (now - backupTime) >= fortyMinutesMs
+            val shouldPrune = photo.backupStatus == BackupStatus.BACKED_UP && (photo.isReProtected || isExpired40Min)
+
+            if (shouldPrune) {
+                photo.localStagingPath?.let { path ->
+                    StagingVaultManager.deleteStagedFile(path)
+                }
+                photoDao.updateLocalStagingPath(photo.mediaStoreId, null)
+                prunedCount++
+                Log.d(TAG, "Copia interna de bóveda para ${photo.displayName} purgada (re-bloqueada=${photo.isReProtected}, expiró 40min=$isExpired40Min)")
+            }
+        }
+        if (prunedCount > 0) {
+            Log.d(TAG, "Total de copias internas de bóveda purgadas con éxito: $prunedCount")
+        }
+        prunedCount
     }
 
     fun triggerBackupWorker(sessionId: Long) {

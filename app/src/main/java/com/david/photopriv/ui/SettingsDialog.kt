@@ -41,9 +41,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+import com.david.photopriv.PhotoPrivApp
 import com.david.photopriv.data.preferences.AppPreferences
 import com.david.photopriv.data.preferences.SmtpConfig
 import com.david.photopriv.data.preferences.TelegramConfig
+import com.david.photopriv.util.CacheCleanerHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,6 +66,7 @@ fun SettingsDialog(
     onTestTelegram: (String, String, (Boolean, String) -> Unit) -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
+    val context = LocalContext.current
 
     // Telegram State
     var botToken by remember { mutableStateOf(currentTelegramConfig.botToken) }
@@ -365,10 +374,61 @@ fun SettingsDialog(
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Comprime las fotos a Full HD (~300 KB) antes del envío. Ahorra 90% de datos móviles y permite que las fotos se envíen en menos de 1 segundo incluso con señal 4G moderada.",
+                                    text = "Comprime fotos a Full HD únicamente si superan los 500 KB. Fotos menores a 500 KB o aquellas donde la compresión no reduzca el tamaño se envían originales sin alterar.",
                                     fontSize = 11.sp,
                                     color = Color(0xFF166534)
                                 )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // --- BÓVEDA BLINDADA Y AUTO-LIMPIEZA ---
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFAF5FF)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "🧹 Bóveda Blindada y Auto-Limpieza",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF6B21A8)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "• Fotos aisladas en sandbox privado (invisibles para galería, WhatsApp y apps externas).\n" +
+                                            "• Las copias internas se autodestruyen al re-bloquear la foto en Google Fotos o transcurridos 40 min.\n" +
+                                            "• Auto-limpieza activa: la app purga automáticamente clips de video temporales y datos residuales al acumularse.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF581C87)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                OutlinedButton(
+                                    onClick = {
+                                        CoroutineScope(Dispatchers.IO).launch {
+                                            val app = context.applicationContext as? PhotoPrivApp
+                                            val dao = app?.database?.photoDao()
+                                            val stats = CacheCleanerHelper.cleanAll(context, dao)
+                                            app?.repository?.pruneExpiredVaultFiles()
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(
+                                                    context,
+                                                    "🧹 Limpieza completada: ${stats.cleanedFilesCount} archivo(s) purgado(s).",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = Color(0xFF6B21A8)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Limpiar Caché y Huérfanos Ahora", fontSize = 12.sp)
+                                }
                             }
                         }
 

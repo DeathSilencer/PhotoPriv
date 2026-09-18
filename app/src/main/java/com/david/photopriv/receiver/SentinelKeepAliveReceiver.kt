@@ -133,7 +133,11 @@ class SentinelKeepAliveReceiver : BroadcastReceiver() {
                     // 4. Asegurar que el vigilante de cambios de URI de WorkManager esté activo
                     PhotoBackupWorker.scheduleMediaWatcher(context)
 
-                    // 5. Re-programar el siguiente latido para dentro de 7 minutos
+                    // 5. Purgar archivos de bóveda que hayan cumplido los 40 minutos o estén re-bloqueados, y auto-limpiar caché
+                    app.repository.pruneExpiredVaultFiles()
+                    com.david.photopriv.util.CacheCleanerHelper.cleanAll(context, app.database.photoDao())
+
+                    // 6. Re-programar el siguiente latido para dentro de 7 minutos
                     scheduleKeepAlive(context, HEARTBEAT_INTERVAL_MS)
                 } else {
                     Log.d(TAG, "No hay sesión activa en base de datos. Centinela permanece inactivo.")

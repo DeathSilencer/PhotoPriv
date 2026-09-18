@@ -649,7 +649,7 @@ fun PhotoChecklistCard(
                 ) {
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(photo.uriString)
+                            .data(photo.localStagingPath?.let { java.io.File(it) }?.takeIf { it.exists() } ?: photo.uriString)
                             .crossfade(true)
                             .build(),
                         contentDescription = photo.displayName,
