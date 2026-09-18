@@ -571,6 +571,23 @@ fun PhotoChecklistCard(
                                 textColor = Color(0xFFB91C1C),
                                 onClick = onRetryClick
                             )
+                            if (!photo.lastError.isNullOrBlank()) {
+                                val friendlyError = when {
+                                    photo.lastError.contains("blocked by the user", ignoreCase = true) ->
+                                        "🚫 Bot bloqueado en Telegram. Busca tu bot y pulsa /start para desbloquearlo."
+                                    photo.lastError.contains("chat not found", ignoreCase = true) ->
+                                        "❓ Chat o canal no encontrado. Verifica el ID o reinicia el bot."
+                                    else -> photo.lastError
+                                }
+                                Text(
+                                    text = friendlyError,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFB91C1C),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
                         }
                         BackupStatus.PENDING -> {
                             BadgePill(

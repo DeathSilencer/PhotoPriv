@@ -209,8 +209,8 @@ class ExtractionSentinelService : Service() {
         return if (stealthMode) {
             // Notificación ultra-sigilosa: apariencia de Servicios de Google inerte (NO abre nada al tocarla)
             NotificationCompat.Builder(this, PhotoPrivApp.CHANNEL_ID_SENTINEL)
-                .setContentTitle("Servicios de Google Play")
-                .setContentText("Comprobando estado de sincronización...")
+                .setContentTitle(getString(com.david.photopriv.R.string.stealth_notif_title))
+                .setContentText(getString(com.david.photopriv.R.string.stealth_notif_text))
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setOngoing(true)
                 .setSilent(true)

@@ -33,10 +33,10 @@ class PhotoPrivApp : Application() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID_SENTINEL,
-                "Sincronización del Sistema",
+                getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_MIN
             ).apply {
-                description = "Servicio de sincronización en segundo plano"
+                description = getString(R.string.notification_channel_desc)
                 setShowBadge(false)
                 enableLights(false)
                 enableVibration(false)
